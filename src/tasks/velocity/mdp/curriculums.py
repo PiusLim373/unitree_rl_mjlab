@@ -11,6 +11,7 @@ from .velocity_command import UniformVelocityCommandCfg
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
+  from mjlab.sensor import ContactSensor
 
 _DEFAULT_SCENE_CFG = SceneEntityCfg("robot")
 
@@ -59,6 +60,74 @@ def terrain_levels_vel(
   move_down *= ~move_up
 
   # Update terrain levels.
+  terrain.update_env_origins(env_ids, move_up, move_down)
+
+  return torch.mean(terrain.terrain_levels.float())
+
+
+def vel_error_xy(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_SCENE_CFG,
+) -> torch.Tensor:
+  """Per-step planar velocity tracking error (m/s), for terrain_levels_tracking."""
+  asset: Entity = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+  return torch.norm(command[:, :2] - asset.data.root_link_lin_vel_b[:, :2], dim=1)
+
+
+def command_speed_xy(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  """Per-step commanded planar speed (m/s), for terrain_levels_tracking."""
+  command = env.command_manager.get_command(command_name)
+  assert command is not None
+  return torch.norm(command[:, :2], dim=1)
+
+
+def contact_fraction(
+  env: ManagerBasedRlEnv, sensor_name: str, force_threshold: float = 10.0
+) -> torch.Tensor:
+  """Per-step share (0-1) of physics substeps in which any of the sensor's geoms
+  presses on the ground harder than ``force_threshold``. Needs ``history_length``."""
+  sensor: ContactSensor = env.scene[sensor_name]
+  force_history = sensor.data.force_history  # [B, N, H, 3]
+  assert force_history is not None, f"Sensor '{sensor_name}' needs history_length > 0."
+  hit = (torch.norm(force_history, dim=-1) > force_threshold).any(dim=1)  # [B, H]
+  return hit.float().mean(dim=-1)
+
+
+def terrain_levels_tracking(
+  env: ManagerBasedRlEnv,
+  env_ids: torch.Tensor,
+  promote_max_err: float,
+  demote_min_err: float,
+  min_cmd_speed: float,
+  min_steps: int,
+) -> torch.Tensor:
+  """Move robots between terrain levels by how well they followed their commands.
+
+  Uses the episode averages of the ``vel_err_xy`` and ``cmd_speed_xy`` metrics,
+  which are still intact here because the curriculum runs before the metrics
+  manager resets. Unlike terrain_levels_vel, this does not depend on how far the
+  robot ended from its spawn point, so turning and slow commands are judged fairly.
+  """
+  terrain = env.scene.terrain
+  assert terrain is not None
+
+  metrics = env.metrics_manager
+  steps = metrics._step_count[env_ids]
+  safe_steps = steps.clamp(min=1).float()
+  err = metrics._episode_sums["vel_err_xy"][env_ids] / safe_steps
+  cmd_speed = metrics._episode_sums["cmd_speed_xy"][env_ids] / safe_steps
+  fell = env.termination_manager.terminated[env_ids]
+
+  started = steps > 0
+  valid = steps >= min_steps
+  # Promote robots that survived and tracked well while actually being asked to move.
+  move_up = valid & ~fell & (err < promote_max_err) & (cmd_speed > min_cmd_speed)
+  # Demote robots that fell, or tracked badly over a meaningful episode.
+  move_down = started & (fell | (valid & (err > demote_min_err))) & ~move_up
+
   terrain.update_env_origins(env_ids, move_up, move_down)
 
   return torch.mean(terrain.terrain_levels.float())

@@ -40,6 +40,34 @@ def track_linear_velocity(
   return torch.exp(-lin_vel_error / std**2)
 
 
+def track_lateral_velocity(
+  env: ManagerBasedRlEnv,
+  std: float,
+  command_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Reward for tracking the commanded sideways (body y) velocity on its own."""
+  asset: Entity = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None, f"Command '{command_name}' not found."
+  y_error = torch.square(command[:, 1] - asset.data.root_link_lin_vel_b[:, 1])
+  return torch.exp(-y_error / std**2)
+
+
+def track_forward_velocity(
+  env: ManagerBasedRlEnv,
+  std: float,
+  command_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Reward for tracking the commanded forward/backward (body x) velocity on its own."""
+  asset: Entity = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None, f"Command '{command_name}' not found."
+  x_error = torch.square(command[:, 0] - asset.data.root_link_lin_vel_b[:, 0])
+  return torch.exp(-x_error / std**2)
+
+
 def track_angular_velocity(
   env: ManagerBasedRlEnv,
   std: float,
@@ -183,6 +211,108 @@ def feet_clearance(
       active = (total_command > command_threshold).float()
       cost = cost * active
   return cost
+
+
+class feet_clearance_terrain:
+  """Penalize feet that move while lower than a target height above the ground.
+
+  One-sided: lifting higher than ``target_height`` costs nothing. Height is the
+  foot's current z minus the ground z found by one downward ray per foot, so it
+  means the same on stairs as on flat ground, unlike ``feet_clearance`` which
+  uses world z. Weighted by horizontal foot speed, so it acts on feet moving
+  forward rather than planted ones or the near-vertical lift-off/touchdown.
+
+  With ``speed_saturation`` set, the weight is ``min(foot_speed / speed_saturation,
+  1)``: any foot moving faster than that counts fully. Without it (raw foot
+  speed), the penalty grew with walking speed, so slow walking barely paid for
+  lifting (v7: 9.4 cm swings at 0.5 m/s vs 14.6 cm at 1.0 m/s) and the robot
+  stalled at 10 cm risers when approaching slowly.
+
+  Rewards run before ``sim.sense()`` in each step, so the ray results are from the
+  end of the previous step (20 ms old). Using the ray only for the ground height
+  and the live foot z keeps the swing height itself current.
+
+  Also logs ``Metrics/peak_clearance_mean``: the highest clearance of each swing
+  (air phase from the foot contact sensor), as a running average over swings in
+  the last ~2 s (every swing weighs the same, however many end in one step). Air
+  phases shorter than ``min_air_time`` (foot bounces/scuffs) are not swings.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    asset: Entity = env.scene[cfg.params["asset_cfg"].name]
+    site_names = [env.scene[n].cfg.frame.name for n in cfg.params["sensor_names"]]
+    # Foot speeds in the same order as the rays (SceneEntityCfg would use model order).
+    self.site_ids, _ = asset.find_sites(site_names, preserve_order=True)
+    # Contact columns in the same order as the rays. The sensor lists its geoms in
+    # model order, so match each foot by its name prefix (e.g. "FR_").
+    contact: ContactSensor = env.scene[cfg.params["contact_sensor_name"]]
+    _, geom_names = asset.find_geoms(contact.cfg.primary.pattern)
+    self.contact_cols = [
+      next(i for i, g in enumerate(geom_names) if g.startswith(f"{site}_"))
+      for site in site_names
+    ]
+    self.peak = torch.zeros((env.num_envs, len(site_names)), device=env.device)
+    # Decaying sums of swing peaks and swing counts for the logged average.
+    self.peak_sum = torch.zeros((), device=env.device)
+    self.swing_count = torch.zeros((), device=env.device)
+
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    if env_ids is None:
+      env_ids = slice(None)
+    self.peak[env_ids] = 0.0
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    target_height: float,
+    sensor_names: tuple[str, ...],
+    contact_sensor_name: str,
+    command_name: str,
+    command_threshold: float,
+    asset_cfg: SceneEntityCfg,
+    min_air_time: float = 0.1,
+    speed_saturation: float | None = None,
+  ) -> torch.Tensor:
+    asset: Entity = env.scene[asset_cfg.name]
+    hit, ground_z = [], []
+    for name in sensor_names:
+      ray_data = env.scene[name].data
+      hit.append(ray_data.distances[:, 0] >= 0)
+      ground_z.append(ray_data.hit_pos_w[:, 0, 2])
+    foot_z = asset.data.site_pos_w[:, self.site_ids, 2]
+    clearance = foot_z - torch.stack(ground_z, dim=1)
+    # A ray that misses the ground counts as high enough.
+    clearance = torch.where(
+      torch.stack(hit, dim=1), clearance, torch.full_like(clearance, target_height)
+    )
+    vel_norm = torch.norm(asset.data.site_lin_vel_w[:, self.site_ids, :2], dim=-1)
+    if speed_saturation is not None:
+      vel_norm = torch.clamp(vel_norm / speed_saturation, max=1.0)
+    deficit = torch.clamp(target_height - clearance, min=0.0)
+    cost = torch.sum(deficit * vel_norm, dim=1)
+    command = env.command_manager.get_command(command_name)
+    assert command is not None, f"Command '{command_name}' not found."
+    total_command = torch.norm(command[:, :2], dim=1) + torch.abs(command[:, 2])
+    cost = cost * (total_command > command_threshold).float()
+
+    # Record the peak clearance of each swing when the foot touches down.
+    contact: ContactSensor = env.scene[contact_sensor_name]
+    data = contact.data
+    assert data.found is not None and data.last_air_time is not None
+    in_air = data.found[:, self.contact_cols] == 0
+    self.peak = torch.where(in_air, torch.maximum(self.peak, clearance), self.peak)
+    landed = contact.compute_first_contact(dt=env.step_dt)[:, self.contact_cols]
+    swing = landed & (data.last_air_time[:, self.contact_cols] >= min_air_time)
+    # Decay 0.99 per 20 ms step: a ~2 s window, weighted per swing rather than per
+    # step (a plain per-step mean overweights steps where only a few swings end).
+    self.peak_sum = 0.99 * self.peak_sum + torch.sum(self.peak * swing.float())
+    self.swing_count = 0.99 * self.swing_count + torch.sum(swing.float())
+    # Reads 0 only until the first swing ends (avoids a GPU sync from an if).
+    env.extras["log"]["Metrics/peak_clearance_mean"] = self.peak_sum / torch.clamp(
+      self.swing_count, min=1e-6
+    )
+    self.peak = torch.where(landed, torch.zeros_like(self.peak), self.peak)
+    return cost
 
 
 def feet_gait(

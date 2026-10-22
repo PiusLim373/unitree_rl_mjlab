@@ -18,6 +18,8 @@ from mjlab.utils.torch import configure_torch_backends
 from mjlab.utils.wrappers import VideoRecorder
 from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer
 
+from ckpt_compat import match_actor_history
+
 
 @dataclass(frozen=True)
 class PlayConfig:
@@ -106,6 +108,8 @@ def run_play(task_id: str, cfg: PlayConfig):
         f"[INFO]: Loading checkpoint: {checkpoint_name} (run: {run_id}, {cached_str})"
       )
     log_dir = resume_path.parent
+    # Let older 47-input checkpoints and 5-step-history ones load in either task.
+    match_actor_history(env_cfg, resume_path)
 
   if cfg.num_envs is not None:
     env_cfg.scene.num_envs = cfg.num_envs

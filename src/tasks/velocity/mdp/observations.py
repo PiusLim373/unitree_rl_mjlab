@@ -6,7 +6,7 @@ import torch
 
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
-from mjlab.sensor import ContactSensor
+from mjlab.sensor import ContactSensor, RayCastSensor
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -19,6 +19,23 @@ def foot_height(
 ) -> torch.Tensor:
   asset: Entity = env.scene[asset_cfg.name]
   return asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # (num_envs, num_sites)
+
+
+def foot_clearance(
+  env: ManagerBasedRlEnv, sensor_names: tuple[str, ...], miss_value: float = 1.0
+) -> torch.Tensor:
+  """Foot height above the ground directly below it, from one downward ray per foot.
+
+  Unlike ``foot_height`` (world z), this stays meaningful on stairs and slopes.
+  Rays that hit nothing within the sensor range read ``miss_value``. Observations
+  are computed right after ``sim.sense()``, so these distances are current.
+  """
+  dists = []
+  for name in sensor_names:
+    sensor: RayCastSensor = env.scene[name]
+    dists.append(sensor.data.distances[:, 0])
+  clearance = torch.stack(dists, dim=1)  # (num_envs, num_feet)
+  return torch.where(clearance < 0, torch.full_like(clearance, miss_value), clearance)
 
 
 def foot_air_time(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
