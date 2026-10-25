@@ -7,15 +7,22 @@ FSM:
     Velocity:
       id: 3
       type: RLBase
+    # Needs config/policy/recovery/<version>/exported/policy.onnx: every enabled
+    # policy state loads its model at startup.
+    Recovery:
+      id: 4
+      type: Recovery   # State_Recovery: RLBase plus an automatic switch to Passive
   Passive:
-    transitions: 
+    transitions:
       FixStand: LT + up.on_pressed
+      Recovery: LT + X.on_pressed
     mode: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
     kd: [3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3]
   FixStand:
-    transitions: 
+    transitions:
       Passive: LT + B.on_pressed
       Velocity: RT + A.on_pressed
+      Recovery: LT + X.on_pressed
     kp: [60, 80, 80, 60, 80, 80, 60, 80, 80, 60, 80, 80]
     kd: [5, 4, 4, 5, 4, 4, 5, 4, 4, 5, 4, 4]
     ts: [0, 1, 2]
@@ -25,7 +32,21 @@ FSM:
       [0., 0.8, -1.5, 0., 0.8, -1.5, 0., 0.8, -1.5, 0., 0.8, -1.5],
     ]
   Velocity:
-    transitions: 
+    transitions:
       Passive: LT + B.on_pressed
-    policy_dir: config/policy/velocity
-    
+      Recovery: LT + X.on_pressed
+    policy_dir: config/policy/velocity/v8sym
+  Recovery:
+    transitions:
+      Passive: LT + B.on_pressed   # manual escape to damping
+    policy_dir: config/policy/recovery
+    timeout: 8.0   # s; not done by then -> Passive, so it can be retried (training episodes are 8 s)
+    # Switch to Passive (damping) once all of these hold for hold_time seconds.
+    # Same thresholds as the training metric (src/tasks/recovery DONE_CHECK).
+    done_check:
+      max_tilt: 0.5        # rad between body and level (allows lying on slopes and along stairs)
+      max_pose_err: 0.2    # rad, every joint vs lying_pose
+      max_joint_vel: 0.3   # rad/s, every joint
+      hold_time: 0.5       # s
+      # FixStand's first keyframe, SDK motor order (FR, FL, RR, RL).
+      lying_pose: [0.0, 1.36, -2.65, 0.0, 1.36, -2.65, 0.0, 1.36, -2.65, 0.0, 1.36, -2.65]

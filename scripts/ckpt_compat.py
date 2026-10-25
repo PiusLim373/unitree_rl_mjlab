@@ -5,6 +5,10 @@ Go2 velocity actors see 47 values per step. Unitree-Go2-Rough-Blind now stacks a
 expect 47. Setting the actor history from the checkpoint lets any of them load in
 either task. Only the actor's input layout changes; terrain, rewards and physics
 stay as the task defines them.
+
+Checkpoints whose input size isn't a multiple of 47 belong to other actor layouts
+(e.g. Recovery: 42 x 5 = 210) and keep the task's own history; loading still
+checks the sizes.
 """
 
 from pathlib import Path
@@ -16,17 +20,18 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 ACTOR_OBS_PER_STEP = 47
 
 
-def actor_history_from_checkpoint(path: str | Path) -> int:
-  """Return how many steps of actor observations the checkpoint was trained on."""
+def actor_history_from_checkpoint(path: str | Path) -> int | None:
+  """Return how many steps of Go2 velocity actor observations the checkpoint was
+  trained on, or None if its input size isn't a multiple of 47 (another layout)."""
   ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
   in_dim = ckpt["actor_state_dict"]["obs_normalizer._mean"].shape[-1]
   if in_dim % ACTOR_OBS_PER_STEP != 0:
-    raise ValueError(
-      f"Actor input size {in_dim} in {path} is not a multiple of {ACTOR_OBS_PER_STEP}."
-    )
+    return None
   return in_dim // ACTOR_OBS_PER_STEP
 
 
 def match_actor_history(env_cfg: ManagerBasedRlEnvCfg, path: str | Path) -> None:
   """Set the actor observation history of ``env_cfg`` to match the checkpoint."""
-  env_cfg.observations["actor"].history_length = actor_history_from_checkpoint(path)
+  history = actor_history_from_checkpoint(path)
+  if history is not None:
+    env_cfg.observations["actor"].history_length = history

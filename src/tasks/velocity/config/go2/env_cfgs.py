@@ -39,6 +39,7 @@ from src.tasks.velocity.mdp import (
   track_forward_velocity,
   track_lateral_velocity,
   vel_error_xy,
+  yaw_rate_error_l1,
 )
 from src.tasks.velocity.velocity_env_cfg import make_velocity_env_cfg
 
@@ -187,6 +188,9 @@ def unitree_go2_rough_blind_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   forward/backward speed has its own tight reward.
   Episodes end only when the body (base or hips) hits the ground or the robot
   tips over; thigh and calf contacts are penalized instead.
+  Yaw-rate errors also get a linear penalty, and the task's runner trains on a
+  left-right mirrored copy of every batch (VelocitySymmetryRunner), so the
+  policy has no built-in left/right lean.
   """
   cfg = unitree_go2_rough_env_cfg(play=play)
 
@@ -222,6 +226,12 @@ def unitree_go2_rough_blind_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # reward (v4 drifted right ~2.3 deg/s when told to go straight).
   twist_cmd.rel_heading_envs = 0.5
   cfg.rewards["track_angular_velocity"].params["std"] = 0.35
+  # Plus a linear yaw-rate penalty: the exp term is flat near zero error, so v7's
+  # slight constant turn (-1.5 deg per 10 s straight) cost <1% of it. 0.5 per rad/s
+  # is ~0.2/s at v7's logged yaw error (0.39) against ~0.6/s of turn reward.
+  cfg.rewards["yaw_rate_error"] = RewardTermCfg(
+    func=yaw_rate_error_l1, weight=-0.5, params={"command_name": "twist"}
+  )
 
   # Short memory (0.1 s) so the blind actor can average noisy readings and feel
   # recent contacts. The critic keeps a single step.

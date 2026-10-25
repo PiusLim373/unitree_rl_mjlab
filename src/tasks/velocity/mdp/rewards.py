@@ -88,6 +88,22 @@ def track_angular_velocity(
   return torch.exp(-ang_vel_error / std**2)
 
 
+def yaw_rate_error_l1(
+  env: ManagerBasedRlEnv,
+  command_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Absolute yaw-rate tracking error |commanded - actual| in rad/s (use a negative weight).
+
+  ``track_angular_velocity`` is flat near zero error, so a small constant turn
+  costs almost nothing there; this linear term keeps the same push at any size.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  command = env.command_manager.get_command(command_name)
+  assert command is not None, f"Command '{command_name}' not found."
+  return torch.abs(command[:, 2] - asset.data.root_link_ang_vel_b[:, 2])
+
+
 def body_orientation_l2(
   env: ManagerBasedRlEnv,
   asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,

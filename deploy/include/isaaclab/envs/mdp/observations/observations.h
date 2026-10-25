@@ -108,16 +108,39 @@ REGISTER_OBSERVATION(last_action)
     return std::vector<float>(data.data(), data.data() + data.size());
 };
 
+// Optional keys under commands/base_velocity in deploy.yaml (absent = raw sticks):
+//   deadzone:        stick values up to it read 0; the rest is rescaled so full stick stays 1.
+//   dpad_lin_vel_x:  while D-pad up/down is held, command exactly (+/-value, 0, 0) and
+//                    ignore the sticks, for repeatable straight-line tests.
 REGISTER_OBSERVATION(velocity_commands)
 {
-    std::vector<float> obs(3);
+    std::vector<float> obs(3, 0.0f);
     auto & joystick = env->robot->data.joystick;
 
-    const auto cfg = env->cfg["commands"]["base_velocity"]["ranges"];
+    const auto cmd_cfg = env->cfg["commands"]["base_velocity"];
+    const auto cfg = cmd_cfg["ranges"];
+    const float dpad_vx = cmd_cfg["dpad_lin_vel_x"].IsDefined() ? cmd_cfg["dpad_lin_vel_x"].as<float>() : 0.0f;
+    const float deadzone = cmd_cfg["deadzone"].IsDefined() ? cmd_cfg["deadzone"].as<float>() : 0.0f;
 
-    obs[0] = std::clamp(joystick->ly(), cfg["lin_vel_x"][0].as<float>(), cfg["lin_vel_x"][1].as<float>());
-    obs[1] = std::clamp(-joystick->lx(), cfg["lin_vel_y"][0].as<float>(), cfg["lin_vel_y"][1].as<float>());
-    obs[2] = std::clamp(-joystick->rx(), cfg["ang_vel_z"][0].as<float>(), cfg["ang_vel_z"][1].as<float>());
+    if (dpad_vx > 0.0f && (joystick->up.pressed || joystick->down.pressed))
+    {
+        obs[0] = joystick->up.pressed ? dpad_vx : -dpad_vx;
+    }
+    else
+    {
+        auto shape = [deadzone](float x) {
+            float mag = std::fabs(x);
+            if (mag <= deadzone) return 0.0f;
+            return std::copysign((mag - deadzone) / (1.0f - deadzone), x);
+        };
+        obs[0] = shape(joystick->ly());
+        obs[1] = -shape(joystick->lx());
+        obs[2] = -shape(joystick->rx());
+    }
+
+    obs[0] = std::clamp(obs[0], cfg["lin_vel_x"][0].as<float>(), cfg["lin_vel_x"][1].as<float>());
+    obs[1] = std::clamp(obs[1], cfg["lin_vel_y"][0].as<float>(), cfg["lin_vel_y"][1].as<float>());
+    obs[2] = std::clamp(obs[2], cfg["ang_vel_z"][0].as<float>(), cfg["ang_vel_z"][1].as<float>());
 
     return obs;
 }
