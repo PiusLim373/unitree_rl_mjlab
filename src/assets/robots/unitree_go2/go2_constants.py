@@ -1,5 +1,6 @@
 """Unitree Go2 constants."""
 
+from dataclasses import replace
 from pathlib import Path
 
 import mujoco
@@ -111,6 +112,20 @@ FULL_COLLISION = CollisionCfg(
   conaffinity=0,
 )
 
+# For getting up after a fall: the robot rolls on its body and legs, so every geom
+# gets friction (condim 3) and the robot collides with itself (conaffinity 1;
+# MuJoCo still skips parent-child pairs). Priority 1 makes the robot's own
+# friction (randomized at startup) apply against the terrain.
+RECOVERY_COLLISION = CollisionCfg(
+  geom_names_expr=(".*_collision",),
+  condim=3,
+  priority=1,
+  friction=(0.6,),
+  solimp={_foot_regex: (0.9, 0.95, 0.023)},
+  contype=1,
+  conaffinity=1,
+)
+
 ##
 # Final config.
 ##
@@ -122,6 +137,29 @@ GO2_ARTICULATION = EntityArticulationInfoCfg(
     GO2_ACTUATOR_CALF,
   ),
   soft_joint_pos_limit_factor=0.9,
+)
+
+# The lying pose's calf angle (-2.65) is outside the 0.9 soft limits (-2.63).
+# Recovery v3 doubles the joint damping (Kd 2/2/3 vs 1/1/2, same stiffness) so leg
+# sweeps and the roll over the hips are physically softer; v1/v2 used 1/1/2.
+GO2_RECOVERY_ARTICULATION = EntityArticulationInfoCfg(
+  actuators=(
+    replace(GO2_ACTUATOR_HIP, damping=2.0),
+    replace(GO2_ACTUATOR_THIGH, damping=2.0),
+    replace(GO2_ACTUATOR_CALF, damping=3.0),
+  ),
+  soft_joint_pos_limit_factor=0.95,
+)
+
+# Lying belly-down with legs folded: the crouch the deploy FixStand starts from.
+LYING_STATE = EntityCfg.InitialStateCfg(
+  pos=(0.0, 0.0, 0.15),
+  joint_pos={
+    ".*hip_joint": 0.0,
+    ".*thigh_joint": 1.36,
+    ".*calf_joint": -2.65,
+  },
+  joint_vel={".*": 0.0},
 )
 
 
@@ -136,6 +174,16 @@ def get_go2_robot_cfg() -> EntityCfg:
     collisions=(FULL_COLLISION,),
     spec_fn=get_spec,
     articulation=GO2_ARTICULATION,
+  )
+
+
+def get_go2_recovery_robot_cfg() -> EntityCfg:
+  """Go2 for the Recovery task: lying pose as default, full contacts with friction."""
+  return EntityCfg(
+    init_state=LYING_STATE,
+    collisions=(RECOVERY_COLLISION,),
+    spec_fn=get_spec,
+    articulation=GO2_RECOVERY_ARTICULATION,
   )
 
 if __name__ == "__main__":

@@ -129,6 +129,12 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   if resume_path is not None:
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     runner.load(str(resume_path))
+    # Step-based curricula (e.g. Recovery's penalty_ramp) read common_step_counter,
+    # which a new env starts at 0. Continue it from the checkpoint's iteration.
+    env.unwrapped.common_step_counter = (
+      runner.current_learning_iteration * cfg.agent.num_steps_per_env
+    )
+    print(f"[INFO]: Resuming at env step {env.unwrapped.common_step_counter}")
 
   # Only write config files from rank 0 to avoid race conditions.
   if rank == 0:

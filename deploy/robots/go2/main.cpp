@@ -2,6 +2,7 @@
 #include "FSM/State_Passive.h"
 #include "FSM/State_FixStand.h"
 #include "FSM/State_RLBase.h"
+#include "FSM/State_Recovery.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
 std::shared_ptr<LowState_t> FSMState::lowstate = nullptr;
@@ -43,6 +44,8 @@ int main(int argc, char** argv)
 
     std::cout << "Press [L2 + up] to enter FixStand mode.\n";
     std::cout << "And then press [R2 + A] to start controlling the robot.\n";
+    std::cout << "After a fall, press [L2 + X] (Triangle on a PS pad) to recover into the lying pose;\n"
+              << "it switches to damping by itself once lying still.\n";
 
     while (true)
     {

@@ -1,0 +1,48 @@
+# Unitree-Go2-Recovery v3 (logs/rsl_rl/go2_recovery/2026-10-24_20-41-16_recovery_v3c, model_5000):
+# get up from a fall into the lying pose (FixStand's crouch). Same inputs/actions as v1/v2.
+# v3: head / hip-and-thigh contact-force and leg-slap penalties, joint damping 2/2/3 (v2: 1/1/2),
+# entropy 0.01 -> 0.002 at iteration 3000. exported/policy.onnx is the plain policy;
+# policy_mirror_avg.onnx is the mirror-averaged one, kept for comparison.
+# v3 eval vs v2 on the same 2048 falls: 96.3% vs 96.1% success, slams (> 600 N) 0.21 vs 0.31 per fall,
+# falls with a head slam 1.5% vs 3.8%, median body-force peak 94 vs 205 N; torque-limit hits 9.8% vs 4.8%.
+# Policy input: 42 values per step x 5-step history = 210, each term's history oldest -> newest.
+# Policy joint order: FL, FR, RL, RR (hip, thigh, calf). joint_ids_map maps it to the SDK order FR, FL, RR, RL.
+joint_ids_map: [3,4,5,0,1,2,9,10,11,6,7,8,]
+step_dt: 0.02
+stiffness: [20, 20, 40, 20, 20, 40, 20, 20, 40, 20, 20, 40]
+damping:   [ 2,  2,  3,  2,  2,  3,  2,  2,  3,  2,  2,  3]
+default_joint_pos: [0.0,1.36,-2.65, 0.0,1.36,-2.65, 0.0,1.36,-2.65, 0.0,1.36,-2.65]
+
+actions:
+  JointPositionAction:
+    clip: null
+    joint_names: [.*]
+    scale: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    offset: [0.0,1.36,-2.65, 0.0,1.36,-2.65, 0.0,1.36,-2.65, 0.0,1.36,-2.65]
+    joint_ids: null
+observations:
+  base_ang_vel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 5
+  projected_gravity:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 5
+  joint_pos_rel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  joint_vel_rel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  last_action:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
