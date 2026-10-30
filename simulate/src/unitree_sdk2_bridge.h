@@ -29,6 +29,8 @@ public:
         if(param::config.use_joystick == 1) {
             if(param::config.joystick_type == "xbox") {
                 joystick = std::make_shared<XBoxJoystick>(param::config.joystick_device, param::config.joystick_bits);
+            } else if(param::config.joystick_type == "ps") {
+                joystick = std::make_shared<PSJoystick>(param::config.joystick_device, param::config.joystick_bits);
             } else if(param::config.joystick_type == "switch") {
                 joystick  = std::make_shared<SwitchJoystick>(param::config.joystick_device, param::config.joystick_bits);
             } else {

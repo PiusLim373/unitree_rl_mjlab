@@ -5,13 +5,13 @@
 
 #include "FSMState.h"
 
-class State_Passive : public FSMState
+class State_Damping : public FSMState
 {
 public:
-    State_Passive(int state, std::string state_string = "Passive") 
+    State_Damping(int state, std::string state_string = "Damping") 
     : FSMState(state, state_string) 
     {
-        auto motor_mode = param::config["FSM"]["Passive"]["mode"];
+        auto motor_mode = param::config["FSM"]["Damping"]["mode"];
         if(motor_mode.IsDefined())
         {
             auto values = motor_mode.as<std::vector<int>>();
@@ -25,7 +25,7 @@ public:
     void enter()
     {
         // set gain
-        static auto kd = param::config["FSM"]["Passive"]["kd"].as<std::vector<float>>();
+        static auto kd = param::config["FSM"]["Damping"]["kd"].as<std::vector<float>>();
         for(int i(0); i < kd.size(); ++i)
         {
             auto & motor = lowcmd->msg_.motor_cmd()[i];
@@ -45,4 +45,4 @@ public:
     }
 };
 
-REGISTER_FSM(State_Passive)
+REGISTER_FSM(State_Damping)

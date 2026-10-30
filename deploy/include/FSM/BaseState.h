@@ -30,6 +30,10 @@ public:
     int getState() {return state_; }
     bool isState(int state) { return state_ == state; }
     std::vector<std::pair<std::function<bool()>, int>> registered_checks;
+
+    // The state the FSM switched from on the latest change (set by CtrlFSM just
+    // before exit/enter), so a state can hand back to wherever it was started from.
+    inline static int previous_state = 0;
 private:
     int state_;
 };

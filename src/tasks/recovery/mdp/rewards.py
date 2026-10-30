@@ -102,9 +102,10 @@ def joint_vel_excess(
 
   joint_vel_l2 weighs every bit of motion the same; this targets the fast peaks
   (v1: 95th percentile 18 rad/s while getting up) and leaves normal motion free.
+  Only asset_cfg's joints (default: all), so motor groups can have their own limit.
   """
   asset: Entity = env.scene[asset_cfg.name]
-  excess = torch.clamp(torch.abs(asset.data.joint_vel) - max_vel, min=0.0)
+  excess = torch.clamp(torch.abs(asset.data.joint_vel[:, asset_cfg.joint_ids]) - max_vel, min=0.0)
   return torch.sum(torch.square(excess), dim=1)
 
 

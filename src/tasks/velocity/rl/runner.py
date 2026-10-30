@@ -70,9 +70,15 @@ class VelocitySymmetryRunner(VelocityOnPolicyRunner):
   evals (``get_inference_policy``) use the plain policy. With
   ``deploy_mirror_averaged = False`` (subclasses), ``policy.onnx`` is the plain
   policy and ``policy_mirror_avg.onnx`` the averaged one.
+
+  ``entropy_switch = (iteration, coef)`` (subclasses) replaces the configured
+  entropy coefficient from that iteration on; see RecoveryRunner for why. It is
+  counted in env steps, so resumed runs (train.py restores the step counter)
+  switch at the same point, and logged as Loss/entropy_coef.
   """
 
   deploy_mirror_averaged: bool = True
+  entropy_switch: tuple[int, float] | None = None  # (iteration, new coef)
 
   def __init__(
     self,
@@ -93,6 +99,26 @@ class VelocitySymmetryRunner(VelocityOnPolicyRunner):
     run_cfg["algorithm"] = dict(train_cfg["algorithm"])
     run_cfg["algorithm"]["symmetry_cfg"] = dict(train_cfg["algorithm"]["symmetry_cfg"])
     super().__init__(env, run_cfg, log_dir, device)
+    if self.entropy_switch is not None:
+      self._schedule_entropy(*self.entropy_switch)
+
+  def _schedule_entropy(self, switch_it: int, late_coef: float) -> None:
+    early_coef = self.alg.entropy_coef
+    steps_per_it = self.cfg["num_steps_per_env"]
+    update = self.alg.update
+
+    def scheduled_update():
+      # Called after the rollout of iteration `it`, which advanced the counter.
+      it = self.env.unwrapped.common_step_counter // steps_per_it - 1
+      coef = late_coef if it >= switch_it else early_coef
+      if coef != self.alg.entropy_coef:
+        print(f"[INFO] Iteration {it}: entropy coefficient {self.alg.entropy_coef} -> {coef}")
+        self.alg.entropy_coef = coef
+      if self.logger.writer is not None:
+        self.logger.writer.add_scalar("Loss/entropy_coef", coef, it)
+      return update()
+
+    self.alg.update = scheduled_update
 
   def export_deploy_onnx(self, policy_path: str) -> None:
     """Write policy.onnx (what deploy/ loads) plus the other variant.

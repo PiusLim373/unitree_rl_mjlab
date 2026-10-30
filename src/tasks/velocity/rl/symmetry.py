@@ -133,6 +133,8 @@ def _term_rule(
     return [0, 1, 2], [1.0, -1.0, -1.0]
   if term == "phase":  # (sin, cos) of the gait clock, shifted half a period
     return [0, 1], [-1.0, -1.0]
+  if term == "kick_phase":  # DonkeyKick timer: time, not a side
+    return [0], [1.0]
   if term in ("joint_pos", "joint_vel"):
     return _leg_rule(env.scene["robot"].joint_names)
   if term == "actions":

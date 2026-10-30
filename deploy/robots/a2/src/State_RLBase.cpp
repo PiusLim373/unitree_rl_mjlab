@@ -18,7 +18,7 @@ State_RLBase::State_RLBase(int state_mode, std::string state_string)
     this->registered_checks.emplace_back(
         std::make_pair(
             [&]()->bool{ return isaaclab::mdp::bad_orientation(env.get(), 1.0); },
-            FSMStringMap.right.at("Passive")
+            FSMStringMap.right.at("Damping")
         )
     );
 }

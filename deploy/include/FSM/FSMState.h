@@ -48,7 +48,7 @@ public:
         registered_checks.emplace_back(
             std::make_pair(
                 []()->bool{ return lowstate->isTimeout(); },
-                FSMStringMap.right.at("Passive")
+                FSMStringMap.right.at("Damping")
             )
         );
     }

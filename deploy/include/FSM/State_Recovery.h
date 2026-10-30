@@ -6,12 +6,12 @@
 #include "FSM/State_RLBase.h"
 
 // Recovery: an RL policy (loaded like Velocity, from its own policy_dir) that gets
-// the robot belly-down into the lying pose, then hands over to damping (Passive)
+// the robot belly-down into the lying pose, then hands over to Damping
 // by itself, either:
 //   - done: the robot has held the lying pose for hold_time, or
 //   - timeout: it isn't done after `timeout` seconds (training episodes were 8 s;
 //     successes take ~2 s). The deterministic policy would only repeat its failing
-//     moves, so damping lets the robot settle and L2 + X retries from a new pose.
+//     moves, so damping lets the robot settle and L2 + Up retries from a new pose.
 //
 // Each hand-over is an ordinary FSM check, the same mechanism as the gamepad
 // transitions: a condition plus a target state, evaluated every FSM tick (1 kHz);
@@ -42,7 +42,7 @@ public:
                                  hold_time_.count());
                     return true;
                 },
-                FSMStringMap.right.at("Passive")
+                FSMStringMap.right.at("Damping")
             )
         );
         this->registered_checks.emplace_back(
@@ -50,10 +50,10 @@ public:
                 [this]()->bool{
                     if (std::chrono::steady_clock::now() - entered_at_ < timeout_) return false;
                     spdlog::warn("Recovery: not done after {:.1f} s, switching to damping "
-                                 "(press L2 + X / Triangle to retry).", timeout_.count());
+                                 "(press L2 + Up to retry).", timeout_.count());
                     return true;
                 },
-                FSMStringMap.right.at("Passive")
+                FSMStringMap.right.at("Damping")
             )
         );
     }

@@ -1,8 +1,10 @@
 #include "FSM/CtrlFSM.h"
-#include "FSM/State_Passive.h"
-#include "FSM/State_FixStand.h"
+#include "FSM/State_Damping.h"
+#include "FSM/State_JointLock.h"
 #include "FSM/State_RLBase.h"
+#include "FSM/State_Velocity.h"
 #include "FSM/State_Recovery.h"
+#include "FSM/State_DonkeyKick.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
 std::shared_ptr<LowState_t> FSMState::lowstate = nullptr;
@@ -42,10 +44,14 @@ int main(int argc, char** argv)
     auto fsm = std::make_unique<CtrlFSM>(param::config["FSM"]);
     fsm->start();
 
-    std::cout << "Press [L2 + up] to enter FixStand mode.\n";
-    std::cout << "And then press [R2 + A] to start controlling the robot.\n";
-    std::cout << "After a fall, press [L2 + X] (Triangle on a PS pad) to recover into the lying pose;\n"
-              << "it switches to damping by itself once lying still.\n";
+    std::cout << "Controls (Unitree's layout; PS pad in Sim2Sim: X Triangle, Y Square, Start Options):\n"
+              << "  [L2 + B]   Damping, from any state\n"
+              << "  [L2 + A]   Damping -> JointLock (stand up); JointLock -> LieDown (lie down,\n"
+              << "             then damping by itself); Velocity -> JointLock\n"
+              << "  [Start]    JointLock <-> Velocity (walk); back to JointLock only when stopped\n"
+              << "  [D-pad]    in Velocity: drive forward/back/sideways at a fixed speed\n"
+              << "  [R2 + Y]   DonkeyKick, [R2 + X] QuickBuck: standing still, hands back by itself\n"
+              << "  [L2 + Up]  Recovery after a fall: lies down, then damping by itself\n";
 
     while (true)
     {

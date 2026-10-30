@@ -110,8 +110,11 @@ REGISTER_OBSERVATION(last_action)
 
 // Optional keys under commands/base_velocity in deploy.yaml (absent = raw sticks):
 //   deadzone:        stick values up to it read 0; the rest is rescaled so full stick stays 1.
-//   dpad_lin_vel_x:  while D-pad up/down is held, command exactly (+/-value, 0, 0) and
-//                    ignore the sticks, for repeatable straight-line tests.
+//   dpad_lin_vel_x:  while D-pad up/down is held, command exactly +/-value forward
+//   dpad_lin_vel_y:  while D-pad left/right is held, command exactly +/-value sideways
+//                    (left = +y). Both combine (diagonals); the sticks are ignored while any
+//                    driving D-pad direction is held, and the D-pad doesn't drive while L2 or
+//                    R2 is held (button combos such as L2 + up).
 REGISTER_OBSERVATION(velocity_commands)
 {
     std::vector<float> obs(3, 0.0f);
@@ -120,11 +123,16 @@ REGISTER_OBSERVATION(velocity_commands)
     const auto cmd_cfg = env->cfg["commands"]["base_velocity"];
     const auto cfg = cmd_cfg["ranges"];
     const float dpad_vx = cmd_cfg["dpad_lin_vel_x"].IsDefined() ? cmd_cfg["dpad_lin_vel_x"].as<float>() : 0.0f;
+    const float dpad_vy = cmd_cfg["dpad_lin_vel_y"].IsDefined() ? cmd_cfg["dpad_lin_vel_y"].as<float>() : 0.0f;
     const float deadzone = cmd_cfg["deadzone"].IsDefined() ? cmd_cfg["deadzone"].as<float>() : 0.0f;
 
-    if (dpad_vx > 0.0f && (joystick->up.pressed || joystick->down.pressed))
+    const bool combo = joystick->LT.pressed || joystick->RT.pressed;
+    const bool dpad_x = !combo && dpad_vx > 0.0f && (joystick->up.pressed || joystick->down.pressed);
+    const bool dpad_y = !combo && dpad_vy > 0.0f && (joystick->left.pressed || joystick->right.pressed);
+    if (dpad_x || dpad_y)
     {
-        obs[0] = joystick->up.pressed ? dpad_vx : -dpad_vx;
+        if (dpad_x) obs[0] = joystick->up.pressed ? dpad_vx : -dpad_vx;
+        if (dpad_y) obs[1] = joystick->left.pressed ? dpad_vy : -dpad_vy;
     }
     else
     {
@@ -171,6 +179,17 @@ REGISTER_OBSERVATION(gait_phase)
     }
 
     return obs;
+}
+
+// DonkeyKick timer (training: src/tasks/kick kick_phase): time since the state was
+// entered as a fraction of params.duration, held at 1. The policy thread resets
+// episode_length to 0 on entry and counts it up before each observation, so step k
+// (from 1) is at (k - 1) * step_dt, as in training (first observation at t = 0).
+REGISTER_OBSERVATION(kick_phase)
+{
+    float duration = params["duration"].as<float>();
+    float t = static_cast<float>(env->episode_length - 1) * env->step_dt;
+    return std::vector<float>{std::clamp(t / duration, 0.0f, 1.0f)};
 }
 
 }

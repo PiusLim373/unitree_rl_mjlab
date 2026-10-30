@@ -1,5 +1,5 @@
 # Unitree-Go2-Recovery v3 (logs/rsl_rl/go2_recovery/2026-10-24_20-41-16_recovery_v3c, model_5000):
-# get up from a fall into the lying pose (FixStand's crouch). Same inputs/actions as v1/v2.
+# get up from a fall into the lying pose (JointLock's crouch). Same inputs/actions as v1/v2.
 # v3: head / hip-and-thigh contact-force and leg-slap penalties, joint damping 2/2/3 (v2: 1/1/2),
 # entropy 0.01 -> 0.002 at iteration 3000. exported/policy.onnx is the plain policy;
 # policy_mirror_avg.onnx is the mirror-averaged one, kept for comparison.

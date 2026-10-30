@@ -47,7 +47,7 @@ public:
 
     void start() 
     {
-        // Start From State_Passive
+        // Start From State_Damping
         currentState = states[0];
         currentState->enter();
 
@@ -103,6 +103,7 @@ private:
                 if(state->isState(nextStateMode))
                 {
                     spdlog::info("FSM: Change state from {} to {}", currentState->getStateString(), state->getStateString());
+                    BaseState::previous_state = currentState->getState();
                     currentState->exit();
                     currentState = state;
                     currentState->enter();

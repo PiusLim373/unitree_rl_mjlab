@@ -10,7 +10,9 @@ default_joint_pos: [-0.1,0.9,-1.8, 0.1,0.9,-1.8, -0.1,0.9,-1.8, 0.1,0.9,-1.8]
 commands:
   base_velocity:
     deadzone: 0.05        # stick values up to 5% read 0 (rest rescaled to full range)
-    dpad_lin_vel_x: 1.0   # hold D-pad up/down: exactly (+/-0.5, 0, 0), sticks ignored
+    dpad_lin_vel_x: 1.0   # hold D-pad up/down: exactly +/-1.0 m/s forward, sticks ignored
+    dpad_lin_vel_y: 0.5   # hold D-pad left/right: exactly +/-0.5 m/s sideways (combines; not while L2/R2 held).
+                          # v8sym walks ~0.33 m/s sideways at this command in Sim2Sim (same as full stick)
     ranges:
       lin_vel_x: [-1.0, 1.0]
       lin_vel_y: [-0.5, 0.5]

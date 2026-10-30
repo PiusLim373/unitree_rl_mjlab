@@ -1,6 +1,6 @@
 #include "FSM/CtrlFSM.h"
-#include "FSM/State_Passive.h"
-#include "FSM/State_FixStand.h"
+#include "FSM/State_Damping.h"
+#include "FSM/State_JointLock.h"
 #include "FSM/State_RLBase.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
@@ -47,7 +47,7 @@ int main(int argc, char** argv)
     auto fsm = std::make_unique<CtrlFSM>(param::config["FSM"]);
     fsm->start();
 
-    std::cout << "Press [L2 + Up] to enter FixStand mode.\n";
+    std::cout << "Press [L2 + Up] to enter JointLock mode.\n";
     std::cout << "And then press [R1 + X] to start controlling the robot.\n";
 
     while (true)

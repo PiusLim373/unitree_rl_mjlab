@@ -1,0 +1,54 @@
+# Unitree-Go2-DonkeyKick v1 (logs/rsl_rl/go2_kick/2026-10-25_22-38-23_kick_v1, model_6000): from standing it
+# tips up onto the front legs (~45 deg nose-down), holds, tucks and snaps both rear legs straight back once
+# (rear feet ~50 cm above the base link), comes down and stands still (~2.5 s).
+# exported/policy.onnx is mirror-averaged; policy_raw.onnx is the plain policy.
+# v1 eval on 2048 kicks: ~99% success (flat 100%), pitch 45 deg, kick reach 37 cm, roll 5.3 deg, landings
+# > 300 N 5%, chin 7.6 cm median on flat; torque-limit hits 12% (front thighs), and ~47% of kicks go over
+# 80% of a motor's top speed (calves up to 0.97 of it).
+# Policy input: 43 values per step x 5-step history = 215, each term's history oldest -> newest.
+# kick_phase = time since the trigger / 2.2 s (KICK_TIMING stand_start), held at 1.
+# Policy joint order: FL, FR, RL, RR (hip, thigh, calf). joint_ids_map maps it to the SDK order FR, FL, RR, RL.
+joint_ids_map: [3,4,5,0,1,2,9,10,11,6,7,8,]
+step_dt: 0.02
+stiffness: [20, 20, 40, 20, 20, 40, 20, 20, 40, 20, 20, 40]
+damping:   [ 1,  1,  2,  1,  1,  2,  1,  1,  2,  1,  1,  2]
+default_joint_pos: [-0.1,0.9,-1.8, 0.1,0.9,-1.8, -0.1,0.9,-1.8, 0.1,0.9,-1.8]
+
+actions:
+  JointPositionAction:
+    clip: null
+    joint_names: [.*]
+    scale: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    offset: [-0.1,0.9,-1.8, 0.1,0.9,-1.8, -0.1,0.9,-1.8, 0.1,0.9,-1.8]
+    joint_ids: null
+observations:
+  base_ang_vel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 5
+  projected_gravity:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 5
+  joint_pos_rel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  joint_vel_rel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  last_action:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  kick_phase:
+    params: {duration: 2.2}
+    clip: null
+    scale: [1.0]
+    history_length: 5

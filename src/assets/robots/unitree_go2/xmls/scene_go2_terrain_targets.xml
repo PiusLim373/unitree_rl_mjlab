@@ -1,0 +1,100 @@
+<mujoco model="scene_go2_terrain_targets">
+  <!-- Go2 Sim2Sim scene with the test terrain of scene_go2_terrain.xml (stairs and ramps 1.5-5.7 m
+       ahead of the spawn, robot facing +x) plus loose kick targets behind the spawn (x <= 0.2).
+       Kick targets: a row of stations along y. At each one, stand the robot on the white pad facing +x
+       (the stripe is the nose); the target is behind it, where the rear feet strike.
+         y =  0.0   two punching bags, one per foot (the robot spawns here, ready to kick)
+         y = +1.5   gym ball
+         y = -1.5   kick pad swinging on a frame
+         y = +3.0   wide moving box on low-friction sliders
+       Walk between stations sideways (left stick, Velocity), stop, then R2 + Circle (QuickBuck) or
+       R2 + Square (DonkeyKick).
+       Every target is a free body: double-click it in the viewer, then Ctrl + right-drag to move
+       it (Ctrl + left-drag turns it). The simulator's Reset puts everything back.
+
+       Where the kick goes (buck v2 in plain MuJoCo): the rear feet are fastest (~4 m/s) at about
+       0.33-0.41 m behind the base centre, 0.32-0.37 m above the floor, spread wide at y = +-0.29-0.33 m.
+       They then slow and close in to y = +-0.19 m at ~0.51 m back, and come down 0.33-0.53 m back.
+       So the targets are wide (or one per foot), their fronts ~0.41 m behind the pad's centre, and
+       nothing stays standing on the floor in front of them: a rear foot that lands on a target
+       props the robot nose-down and it never settles (crates and block towers did that). -->
+  <include file="scene_go2_terrain.xml"/>
+
+  <default>
+    <default class="target">
+      <geom friction="0.6 0.005 0.0001"/>
+    </default>
+    <default class="mark">
+      <geom type="box" contype="0" conaffinity="0" group="1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <!-- y = 0: two 4 kg bags (28 cm across) on ball joints, hanging from a 45 kg stand whose post
+         and base are 0.8-1.4 m behind the robot. -->
+    <frame name="station_bags" pos="0 0 0">
+      <geom name="pad_bags" class="mark" size="0.19 0.15 0.0005" pos="0 0 0.0005" rgba="1 1 1 0.25"/>
+      <geom name="nose_bags" class="mark" size="0.06 0.012 0.0006" pos="0.2 0 0.0006" rgba="1 1 1 0.6"/>
+      <body name="bag_stand" pos="-1.1 0 0" childclass="target">
+        <freejoint/>
+        <geom name="bag_stand_base" type="box" size="0.3 0.45 0.03" pos="0 0 0.03" mass="35" rgba="0.2 0.2 0.22 1"/>
+        <geom name="bag_stand_post" type="box" size="0.04 0.04 0.65" pos="0 0 0.71" mass="5" rgba="0.3 0.3 0.33 1"/>
+        <geom name="bag_stand_arm" type="box" size="0.27 0.03 0.03" pos="0.27 0 1.33" mass="3" rgba="0.3 0.3 0.33 1"/>
+        <geom name="bag_stand_bar" type="box" size="0.03 0.36 0.03" pos="0.53 0 1.33" mass="2" rgba="0.3 0.3 0.33 1"/>
+        <body name="bag_left" pos="0.53 0.3 1.3">
+          <joint name="bag_left_swing" type="ball" damping="0.3"/>
+          <geom name="bag_left_chain" type="capsule" fromto="0 0 0 0 0 -0.33" size="0.008" mass="0.1" rgba="0.6 0.6 0.6 1"/>
+          <geom name="bag_left" type="capsule" size="0.14 0.25" pos="0 0 -0.72" mass="4" rgba="0.75 0.12 0.1 1"/>
+        </body>
+        <body name="bag_right" pos="0.53 -0.3 1.3">
+          <joint name="bag_right_swing" type="ball" damping="0.3"/>
+          <geom name="bag_right_chain" type="capsule" fromto="0 0 0 0 0 -0.33" size="0.008" mass="0.1" rgba="0.6 0.6 0.6 1"/>
+          <geom name="bag_right" type="capsule" size="0.14 0.25" pos="0 0 -0.72" mass="4" rgba="0.75 0.12 0.1 1"/>
+        </body>
+      </body>
+    </frame>
+
+    <!-- y = +1.5: a 60 cm, 1 kg gym ball on the floor (hollow: inertia 2/3 m r^2). -->
+    <frame name="station_ball" pos="0 1.5 0">
+      <geom name="pad_ball" class="mark" size="0.19 0.15 0.0005" pos="0 0 0.0005" rgba="1 1 1 0.25"/>
+      <geom name="nose_ball" class="mark" size="0.06 0.012 0.0006" pos="0.2 0 0.0006" rgba="1 1 1 0.6"/>
+      <body name="gym_ball" pos="-0.7 0 0.3" childclass="target">
+        <freejoint/>
+        <inertial pos="0 0 0" mass="1.0" diaginertia="0.06 0.06 0.06"/>
+        <geom name="gym_ball" type="sphere" size="0.3" condim="6" rgba="0.15 0.45 0.85 1"/>
+      </body>
+    </frame>
+
+    <!-- y = -1.5: an 80 x 40 cm, 2 kg foam pad hanging from a hinge on a 26 kg frame (posts at
+         y = +-0.6, base 0.3-0.85 m behind the robot). -->
+    <frame name="station_pad" pos="0 -1.5 0">
+      <geom name="pad_pad" class="mark" size="0.19 0.15 0.0005" pos="0 0 0.0005" rgba="1 1 1 0.25"/>
+      <geom name="nose_pad" class="mark" size="0.06 0.012 0.0006" pos="0.2 0 0.0006" rgba="1 1 1 0.6"/>
+      <body name="pad_frame" pos="-0.45 0 0" childclass="target">
+        <freejoint/>
+        <geom name="pad_frame_foot_l" type="box" size="0.275 0.04 0.02" pos="-0.125 0.6 0.02" mass="10" rgba="0.2 0.2 0.22 1"/>
+        <geom name="pad_frame_foot_r" type="box" size="0.275 0.04 0.02" pos="-0.125 -0.6 0.02" mass="10" rgba="0.2 0.2 0.22 1"/>
+        <geom name="pad_frame_post_l" type="box" size="0.03 0.03 0.5" pos="0 0.6 0.54" mass="2" rgba="0.3 0.3 0.33 1"/>
+        <geom name="pad_frame_post_r" type="box" size="0.03 0.03 0.5" pos="0 -0.6 0.54" mass="2" rgba="0.3 0.3 0.33 1"/>
+        <geom name="pad_frame_bar" type="box" size="0.03 0.63 0.03" pos="0 0 1.04" mass="2" rgba="0.3 0.3 0.33 1"/>
+        <body name="kick_pad" pos="0 0 1.0">
+          <joint name="kick_pad_swing" type="hinge" axis="0 1 0" damping="0.3"/>
+          <geom name="kick_pad_strap_l" type="capsule" fromto="0 0.3 0 0 0.3 -0.35" size="0.006" mass="0.05" rgba="0.15 0.15 0.15 1"/>
+          <geom name="kick_pad_strap_r" type="capsule" fromto="0 -0.3 0 0 -0.3 -0.35" size="0.006" mass="0.05" rgba="0.15 0.15 0.15 1"/>
+          <geom name="kick_pad" type="box" size="0.04 0.4 0.2" pos="0 0 -0.55" mass="2" rgba="0.1 0.35 0.75 1"/>
+        </body>
+      </body>
+    </frame>
+
+    <!-- y = +3.0: a 0.3 x 0.75 x 0.7 m, 1.5 kg box. Its floor contact uses its own friction (0.15,
+         priority 1), so it slides away instead of tipping over under the robot's landing feet. -->
+    <frame name="station_box" pos="0 3.0 0">
+      <geom name="pad_box" class="mark" size="0.19 0.15 0.0005" pos="0 0 0.0005" rgba="1 1 1 0.25"/>
+      <geom name="nose_box" class="mark" size="0.06 0.012 0.0006" pos="0.2 0 0.0006" rgba="1 1 1 0.6"/>
+      <body name="moving_box" pos="-0.56 0 0.35" childclass="target">
+        <freejoint/>
+        <geom name="moving_box" type="box" size="0.15 0.375 0.35" mass="1.5" priority="1" friction="0.15 0.005 0.0001" rgba="0.65 0.48 0.3 1"/>
+      </body>
+    </frame>
+  </worldbody>
+</mujoco>

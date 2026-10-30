@@ -13,7 +13,7 @@ _FOOT_GEOMS = tuple(f"{foot}_foot_collision" for foot in ("FR", "FL", "RR", "RL"
 def unitree_go2_recovery_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create Unitree Go2 recovery configuration: get up into the lying pose.
 
-  The lying pose is the crouch the deploy FixStand starts from (hips 0, thighs
+  The lying pose is the crouch the deploy JointLock starts from (hips 0, thighs
   1.36, calves -2.65). The deploy Recovery state hands over to damping once the
   robot holds it (see DONE_CHECK).
   """

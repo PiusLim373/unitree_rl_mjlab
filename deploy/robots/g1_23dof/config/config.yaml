@@ -1,8 +1,8 @@
 FSM:
   _: # enabled fsms
-    Passive:
+    Damping:
       id: 1
-    FixStand:
+    JointLock:
       id: 2
     Velocity:
       id: 3
@@ -12,9 +12,9 @@ FSM:
       id: 5
       type: Mimic
 
-  Passive:
+  Damping:
     transitions: 
-      FixStand: LT + up.on_pressed
+      JointLock: LT + up.on_pressed
     mode: [
       1,1,1,1,1,1,
       1,1,1,1,1,1,
@@ -29,9 +29,9 @@ FSM:
       3,3,3,3,3,3,3,  
       3,3,3,3,3,3,3,  
     ]
-  FixStand:
+  JointLock:
     transitions: 
-      Passive: LT + B.on_pressed
+      Damping: LT + B.on_pressed
       Velocity: RT + A.on_pressed
     kp: [
       100., 100., 100., 150., 40., 40.,
@@ -59,13 +59,13 @@ FSM:
     ]
   Velocity:
     transitions: 
-      Passive: LT + B.on_pressed
+      Damping: LT + B.on_pressed
       Mimic_Dance1_subject2: RB + A.on_pressed
     policy_dir: config/policy/velocity
 
   Mimic_Dance1_subject2:
     transitions:
-      Passive: LT + B.on_pressed
+      Damping: LT + B.on_pressed
       Velocity: RT + A.on_pressed
 
     motion_file: config/policy/mimic/dance1_subject2/params/dance1_subject2.npz
