@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <eigen3/Eigen/Dense>
 #include <yaml-cpp/yaml.h>
 #include "isaaclab/envs/manager_based_rl_env.h"
@@ -38,6 +39,8 @@ public:
 
     virtual void process_actions(std::vector<float> actions)
     {
+        // Written by the policy thread, read by the FSM thread (processed_actions).
+        std::lock_guard<std::mutex> lock(_mutex);
         // TODO: modify action by joint_ids
         _raw_actions = actions;
         for(int i(0); i<_action_dim; ++i)
@@ -70,17 +73,26 @@ public:
         return _raw_actions;
     }
     
-    std::vector<float> processed_actions() 
+    std::vector<float> processed_actions()
     {
+        std::lock_guard<std::mutex> lock(_mutex);
         return _processed_actions;
     }
 
+    // Also drops the last episode's targets: a zero action (the offset), never a stale one.
     void reset()
     {
+        std::lock_guard<std::mutex> lock(_mutex);
         _raw_actions.assign(_action_dim, 0.0f);
+        if(_offset.empty()) {
+            _processed_actions.assign(_action_dim, 0.0f);
+        } else {
+            _processed_actions = _offset;
+        }
     }
 
 protected:
+    std::mutex _mutex;
     int _action_dim;
     std::vector<int> _joint_ids;
 

@@ -4,8 +4,12 @@
 #pragma once
 
 #include "onnxruntime_cxx_api.h"
+#include <algorithm>
+#include <chrono>
+#include <filesystem>
 #include <iostream>
 #include <mutex>
+#include <spdlog/spdlog.h>
 
 namespace isaaclab
 {
@@ -59,6 +63,36 @@ public:
         output_names.push_back(output_name.release());
 
         action.resize(output_shape[1]);
+
+        // The first Run() sets onnxruntime up and is much slower than the rest: pay for it
+        // here at startup, not on the robot's first policy step.
+        auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+        std::vector<std::vector<float>> zeros;
+        for (size_t i = 0; i < input_names.size(); ++i) {
+            zeros.emplace_back(input_sizes[i], 0.0f);
+        }
+        std::vector<Ort::Value> inputs;
+        for (size_t i = 0; i < input_names.size(); ++i) {
+            inputs.push_back(Ort::Value::CreateTensor<float>(
+                memory_info, zeros[i].data(), input_sizes[i], input_shapes[i].data(), input_shapes[i].size()));
+        }
+        constexpr int kWarmupRuns = 20;
+        std::vector<double> ms;
+        for (int i = 0; i < kWarmupRuns; ++i) {
+            const auto t0 = std::chrono::steady_clock::now();
+            session->Run(Ort::RunOptions{nullptr}, input_names.data(), inputs.data(), inputs.size(),
+                         output_names.data(), 1);
+            ms.push_back(std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - t0).count());
+        }
+        // first: the one-time setup; median: the usual time; max: CPU stalls show up here.
+        std::vector<double> rest(ms.begin() + 1, ms.end());
+        std::sort(rest.begin(), rest.end());
+        // <policy>/<version> from .../<policy>/<version>/exported/policy.onnx
+        const auto dir = std::filesystem::path(model_path).parent_path().parent_path();
+        spdlog::info("ONNX warm-up {}/{}: first {:.2f} ms, median {:.2f} ms, max {:.2f} ms ({} runs)",
+                     dir.parent_path().filename().string(), dir.filename().string(),
+                     ms.front(), rest[rest.size() / 2], rest.back(), kWarmupRuns);
     }
 
     std::vector<float> act(std::unordered_map<std::string, std::vector<float>> obs)
