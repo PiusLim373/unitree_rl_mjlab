@@ -95,6 +95,18 @@ class SymmetricPolicy(torch.nn.Module):
     return self.policy.output_names
 
 
+class MirroredPolicy(SymmetricPolicy):
+  """Exportable mirror twin of a policy: ``forward(x) = M_a pi(M_o x)``.
+
+  For moves with a side (SideFlip): the robot's state is mirrored on the way in
+  and the actions on the way out, so a left-flip policy flips right. Same input
+  and output names and shapes, so deploy.yaml and the C++ controller work as-is.
+  """
+
+  def forward(self, x: torch.Tensor) -> torch.Tensor:
+    return self.policy(x[:, self.obs_perm] * self.obs_sign)[:, self.act_perm] * self.act_sign
+
+
 def _swap_side(name: str) -> str:
   parts = name.split("_")
   swapped = [_SIDE_SWAP.get(p, p) for p in parts]

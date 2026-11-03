@@ -1,16 +1,20 @@
-"""Unitree Go2 DonkeyKick and QuickBuck environment configurations."""
+"""Unitree Go2 DonkeyKick, QuickBuck, SideFlip and FrontFlip environment configurations."""
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
 
 from src.assets.robots import get_go2_dc_robot_cfg, get_go2_robot_cfg
 from src.tasks.kick.buck_env_cfg import to_buck_env_cfg
+from src.tasks.kick.flip_env_cfg import to_front_flip_env_cfg, to_side_flip_env_cfg
 from src.tasks.kick.kick_env_cfg import make_kick_env_cfg
 from src.tasks.velocity.mdp import LiftedGridPatternCfg
 
 _FOOT_GEOMS = tuple(f"{foot}_foot_collision" for foot in ("FR", "FL", "RR", "RL"))
 _REAR_FEET = r"^R[LR]_foot_collision$"
 _FRONT_FEET = r"^F[LR]_foot_collision$"
+_ALL_FEET = r"^[FR][LR]_foot_collision$"
+_LIMBS = r"^[FR][LR]_(thigh|calf\d|foot)_collision$"
+_KNEES = r"^[FR][LR]_(thigh|calf\d)_collision$"
 
 # The two stances the deploy starts the kick from (joint regex -> rad).
 FIXSTAND_STANCE = {r".*hip_joint": 0.0, r".*thigh_joint": 0.8, r".*calf_joint": -1.5}
@@ -20,6 +24,28 @@ VELOCITY_STANCE = {  # = INIT_STATE, the Go2 default pose
   r".*thigh_joint": 0.9,
   r".*calf_joint": -1.8,
 }
+
+# FrontFlip mid-flip starts' leg poses: FrontFlip v5's in the air (front legs forward, hips
+# splayed, rear legs tucked under the belly), and the stand pose (VELOCITY_STANCE: the
+# legs landing_pose pays for; multistage v2, in place of rear legs swung back for v8's
+# ~262 deg catch).
+FLIP_TUCKED_STANCE = {
+  r"FL_hip_joint": 0.5,
+  r"FR_hip_joint": -0.5,
+  r"F[LR]_thigh_joint": 1.5,
+  r"F[LR]_calf_joint": -1.7,
+  r"RL_hip_joint": -0.3,
+  r"RR_hip_joint": 0.3,
+  r"R[LR]_thigh_joint": -0.15,
+  r"R[LR]_calf_joint": -2.1,
+}
+# go2.xml: hip axes at x +-0.1934 m; base box corners, head and hips as (x, z, radius) (m).
+_HIP_X = 0.1934
+_BODY_POINTS = (
+  (0.1881, 0.057, 0.0), (0.1881, -0.057, 0.0), (-0.1881, 0.057, 0.0), (-0.1881, -0.057, 0.0),
+  (0.285, 0.01, 0.05), (0.293, -0.06, 0.047),
+  (_HIP_X, 0.0, 0.05), (-_HIP_X, 0.0, 0.05),
+)
 
 
 def unitree_go2_kick_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
@@ -116,3 +142,71 @@ def unitree_go2_buck_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg = unitree_go2_kick_env_cfg(play)
   cfg.scene.entities = {"robot": get_go2_dc_robot_cfg()}
   return to_buck_env_cfg(cfg)
+
+
+def _flip_base_cfg(play: bool) -> ManagerBasedRlEnvCfg:
+  """The DonkeyKick setup (starts, sensors, terrain, randomisation, play mode) with DC
+  motor torque-speed curves and the limbs_ground sensor, for the flips."""
+  cfg = unitree_go2_kick_env_cfg(play)
+  cfg.scene.entities = {"robot": get_go2_dc_robot_cfg()}
+  # Feet, calves and thighs against the terrain: airborne means none of them touching
+  # (SideFlip v1 used the feet only, so a thigh on the ground still counted as in the air).
+  limbs_ground_cfg = ContactSensorCfg(
+    name="limbs_ground",
+    primary=ContactMatch(mode="geom", pattern=_LIMBS, entity="robot"),
+    secondary=ContactMatch(mode="body", pattern="terrain"),
+    fields=("found",),
+    reduce="netforce",
+    num_slots=1,
+    history_length=4,
+  )
+  cfg.scene.sensors = (cfg.scene.sensors or ()) + (limbs_ground_cfg,)
+  return cfg
+
+
+# go2.xml's subtreeangmom sensor on base_link, and the flips' contact sets.
+_FLIP_SENSORS = {
+  "feet_pattern": _ALL_FEET,
+  "angmom_sensor": "robot/root_angmom",
+  "limbs_sensor": "limbs_ground",
+  "limbs_pattern": _LIMBS,
+}
+
+
+def unitree_go2_side_flip_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Create Unitree Go2 SideFlip configuration (the left flip; the right one is it mirrored).
+
+  The flips' DonkeyKick-based setup, then SideFlip's timing and rewards.
+  """
+  return to_side_flip_env_cfg(_flip_base_cfg(play), **_FLIP_SENSORS)
+
+
+def unitree_go2_front_flip_env_cfg(play: bool = False, stage: int = 4) -> ManagerBasedRlEnvCfg:
+  """Create Unitree Go2 FrontFlip configuration (one turn nose-down, over its back).
+
+  The flips' DonkeyKick-based setup, then FrontFlip's timing and rewards; stage 1 to 3
+  are the multistage recipe's training stages (front_flip_stage), 4 the full FrontFlip.
+  """
+  cfg = _flip_base_cfg(play)
+  # Thighs and calves against the terrain with contact force (peak over the step's
+  # substeps): the knee impact penalty.
+  knees_ground_cfg = ContactSensorCfg(
+    name="knees_ground",
+    primary=ContactMatch(mode="geom", pattern=_KNEES, entity="robot"),
+    secondary=ContactMatch(mode="body", pattern="terrain"),
+    fields=("found", "force"),
+    reduce="netforce",
+    num_slots=1,
+    history_length=4,
+  )
+  cfg.scene.sensors = cfg.scene.sensors + (knees_ground_cfg,)
+  cfg = to_front_flip_env_cfg(
+    cfg, **_FLIP_SENSORS, front_feet_pattern=_FRONT_FEET, rear_feet_pattern=_REAR_FEET,
+    knee_pattern=_KNEES, knee_force_sensor="knees_ground", stage=stage,
+  )
+  if "mid_flip_start" in cfg.events:  # training only
+    mid = cfg.events["mid_flip_start"].params
+    mid["stances"] = (FLIP_TUCKED_STANCE, VELOCITY_STANCE)
+    mid["hip_x"] = _HIP_X
+    mid["body_points"] = _BODY_POINTS
+  return cfg

@@ -6,6 +6,7 @@ from src.tasks.recovery.mdp.rewards import part_contact_force as part_contact_fo
 from src.tasks.recovery.mdp.rewards import torque_excess as torque_excess
 
 from .events import *  # noqa: F403
+from .flip import *  # noqa: F403
 from .observations import *  # noqa: F403
 from .rewards import *  # noqa: F403
 from .terminations import *  # noqa: F403

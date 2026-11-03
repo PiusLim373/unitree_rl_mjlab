@@ -6,7 +6,9 @@ loads) and policy_raw.onnx (plain) into the output folder. Use it for checkpoint
 saved before that export existed (v8 and earlier); new runs save both files.
 With --task Unitree-Go2-Recovery (RecoveryRunner), policy.onnx is the plain policy
 and policy_mirror_avg.onnx the averaged one; use it to deploy a checkpoint other
-than the run's last.
+than the run's last. With --task Unitree-Go2-SideFlip (FlipRunner), policy.onnx is the
+plain policy (the left flip) and policy_right.onnx the same policy mirrored (the right
+flip).
 """
 
 import sys
@@ -37,6 +39,7 @@ def main():
   # Populate task registry.
   import mjlab.tasks  # noqa: F401
   import src.tasks  # noqa: F401
+  from src.tasks.kick.rl import FlipRunner
   from src.tasks.velocity.rl import VelocitySymmetryRunner
 
   cfg = tyro.cli(ExportConfig, prog=sys.argv[0])
@@ -44,8 +47,8 @@ def main():
   if not ckpt.is_file():
     raise FileNotFoundError(f"Checkpoint file not found: {ckpt}")
   runner_cls = load_runner_cls(cfg.task)
-  if runner_cls is None or not issubclass(runner_cls, VelocitySymmetryRunner):
-    raise ValueError(f"Task '{cfg.task}' does not export mirror-averaged policies.")
+  if runner_cls is None or not issubclass(runner_cls, (VelocitySymmetryRunner, FlipRunner)):
+    raise ValueError(f"Task '{cfg.task}' does not export mirror-averaged or mirrored policies.")
   device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
 
   # One robot is enough: the env only supplies observation layout, joint names
@@ -61,7 +64,9 @@ def main():
   runner.load(str(ckpt), load_cfg={"actor": True}, strict=True, map_location=device)
   runner.export_deploy_onnx(cfg.output_dir)
   env.close()
-  if runner_cls.deploy_mirror_averaged:
+  if issubclass(runner_cls, FlipRunner):
+    files = "policy.onnx (plain, the left flip) and policy_right.onnx (mirrored, the right flip)"
+  elif runner_cls.deploy_mirror_averaged:
     files = "policy.onnx (mirror-averaged) and policy_raw.onnx (plain)"
   else:
     files = "policy.onnx (plain) and policy_mirror_avg.onnx (mirror-averaged)"

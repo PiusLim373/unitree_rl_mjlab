@@ -1,0 +1,51 @@
+# Unitree-Go2-SideFlip v2 (logs/rsl_rl/go2_sideflip/2026-10-31_14-05-16_sideflip_v2, model_4000): one full
+# side roll in the air, landing on all four feet and standing still, on Unitree's own flip timing.
+# exported/policy.onnx is the plain policy (left flip: over its left side); policy_right.onnx is the same
+# policy mirrored (right flip). Both take the same input and give actions in the same order.
+# Policy input: 43 values per step x 5-step history = 215, each term's history oldest -> newest.
+# kick_phase = time since the trigger / 1.0 s (FLIP_TIMING stand_start), held at 1.
+# Policy joint order: FL, FR, RL, RR (hip, thigh, calf). joint_ids_map maps it to the SDK order FR, FL, RR, RL.
+joint_ids_map: [3,4,5,0,1,2,9,10,11,6,7,8,]
+step_dt: 0.02
+stiffness: [20, 20, 40, 20, 20, 40, 20, 20, 40, 20, 20, 40]
+damping:   [ 1,  1,  2,  1,  1,  2,  1,  1,  2,  1,  1,  2]
+default_joint_pos: [-0.1,0.9,-1.8, 0.1,0.9,-1.8, -0.1,0.9,-1.8, 0.1,0.9,-1.8]
+
+actions:
+  JointPositionAction:
+    clip: null
+    joint_names: [.*]
+    scale: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    offset: [-0.1,0.9,-1.8, 0.1,0.9,-1.8, -0.1,0.9,-1.8, 0.1,0.9,-1.8]
+    joint_ids: null
+observations:
+  base_ang_vel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 5
+  projected_gravity:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 5
+  joint_pos_rel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  joint_vel_rel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  last_action:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  kick_phase:
+    params: {duration: 1.0}
+    clip: null
+    scale: [1.0]
+    history_length: 5

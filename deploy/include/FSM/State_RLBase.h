@@ -81,9 +81,10 @@ public:
         }
     }
 
-private:
+protected:
     std::unique_ptr<isaaclab::ManagerBasedRLEnv> env;
 
+private:
     std::thread policy_thread;
     bool policy_thread_running = false;
 };

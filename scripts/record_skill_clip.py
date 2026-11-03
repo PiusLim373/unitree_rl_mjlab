@@ -6,6 +6,7 @@ every browser, iPad/Safari included. The camera follows base_link from the front
 tilted down so the horizon (MuJoCo's black sky) stays out of frame.
 
 --seconds is the loop length: one skill plus a short hold, starting from the episode reset.
+--mirror runs the policy mirrored, as policy_right.onnx deploys it (SideFlip's right flip).
 Check the clip before using it, then copy it to goaway_ui/public/skills/ and add the skill
 to SKILLS in goaway_ui's QuadrupedWidget.jsx.
 
@@ -53,6 +54,8 @@ class RecordConfig:
   flat: bool = True
   """Flat plane instead of the task's play terrain."""
   seed: int = 0
+  mirror: bool = False
+  """Run the policy mirrored (left-right), e.g. SideFlip's right flip."""
   device: str | None = None
 
 
@@ -60,6 +63,7 @@ def main():
   # Populate task registry.
   import mjlab.tasks  # noqa: F401
   import src.tasks  # noqa: F401
+  from src.tasks.velocity.rl.symmetry import _get_maps
 
   cfg = tyro.cli(RecordConfig, prog=sys.argv[0])
   ckpt = Path(cfg.checkpoint)
@@ -88,6 +92,15 @@ def main():
   runner = runner_cls(env, asdict(agent_cfg), device=device)
   runner.load(str(ckpt), load_cfg={"actor": True}, strict=True, map_location=device)
   policy = runner.get_inference_policy(device=device)
+  if cfg.mirror:
+    maps = _get_maps(env)
+    (obs_perm, obs_sign), (act_perm, act_sign) = maps["actor"], maps["__actions__"]
+    plain = policy
+
+    def policy(obs):
+      flipped = obs.clone()
+      flipped["actor"] = obs["actor"][:, obs_perm] * obs_sign
+      return plain(flipped)[:, act_perm] * act_sign
 
   step_dt = env.unwrapped.step_dt
   frames = []

@@ -53,7 +53,11 @@ def _in_contact(env: ManagerBasedRlEnv, sensor_name: str, geom_pattern: str) -> 
 
 
 def _time(env: ManagerBasedRlEnv) -> torch.Tensor:
-  return env.episode_length_buf.float() * env.step_dt
+  """Time since the trigger (s): the episode time, plus the late start of an episode
+  that began mid-flip (reset_mid_flip's env.flip_time_offset)."""
+  t = env.episode_length_buf.float() * env.step_dt
+  offset = getattr(env, "flip_time_offset", None)
+  return t if offset is None else t + offset
 
 
 def _window(env: ManagerBasedRlEnv, start: float, end: float) -> torch.Tensor:

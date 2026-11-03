@@ -1,4 +1,4 @@
-"""RL configuration for Unitree Go2 DonkeyKick and QuickBuck tasks."""
+"""RL configuration for Unitree Go2 DonkeyKick, QuickBuck and SideFlip tasks."""
 
 from mjlab.rl import RslRlOnPolicyRunnerCfg
 
@@ -21,4 +21,18 @@ def unitree_go2_buck_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """As DonkeyKick (same network, PPO and exploration switch), own experiment folder."""
   cfg = unitree_go2_kick_ppo_runner_cfg()
   cfg.experiment_name = "go2_buck"
+  return cfg
+
+
+def unitree_go2_side_flip_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+  """As DonkeyKick (same network, PPO and exploration switch), own experiment folder."""
+  cfg = unitree_go2_kick_ppo_runner_cfg()
+  cfg.experiment_name = "go2_sideflip"
+  return cfg
+
+
+def unitree_go2_front_flip_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+  """As DonkeyKick (same network, PPO and exploration switch), own experiment folder."""
+  cfg = unitree_go2_kick_ppo_runner_cfg()
+  cfg.experiment_name = "go2_frontflip"
   return cfg

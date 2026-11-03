@@ -64,6 +64,35 @@ def _group_name(actuator: DcMotorActuatorCfg) -> str:
   return "_".join(re.sub(r"[^a-z]", "", e) for e in actuator.target_names_expr)
 
 
+def apply_power_fraction(cfg: ManagerBasedRlEnvCfg, fraction: float, joint_vel_weight: float) -> None:
+  """Penalise torque and joint speed above `fraction` of the motor limits (in place).
+
+  The single joint_vel_excess term becomes one per actuator group, at `fraction` of
+  that group's top speed, and takes its place in the penalty ramp. The robot entity
+  must use DC motor actuators (torque falls with speed).
+  """
+  rewards = cfg.rewards
+  rewards.pop("joint_vel_excess", None)
+  rewards["torque_excess"].params["fraction"] = fraction
+  vel_terms = []
+  for actuator in cfg.scene.entities["robot"].articulation.actuators:
+    assert isinstance(actuator, DcMotorActuatorCfg), "power limits need DC motor actuators"
+    name = f"joint_vel_excess_{_group_name(actuator)}"
+    rewards[name] = RewardTermCfg(
+      func=mdp.joint_vel_excess,
+      weight=joint_vel_weight,
+      params={
+        "max_vel": fraction * actuator.velocity_limit,
+        "asset_cfg": SceneEntityCfg("robot", joint_names=actuator.target_names_expr),
+      },
+    )
+    vel_terms.append(name)
+
+  if "penalty_ramp" in cfg.curriculum:  # not in play mode
+    ramp = cfg.curriculum["penalty_ramp"].params
+    ramp["term_names"] = [n for n in ramp["term_names"] if n != "joint_vel_excess"] + vel_terms
+
+
 def to_buck_env_cfg(cfg: ManagerBasedRlEnvCfg) -> ManagerBasedRlEnvCfg:
   """Turn a robot's DonkeyKick configuration into QuickBuck (in place; returned).
 
@@ -103,28 +132,10 @@ def to_buck_env_cfg(cfg: ManagerBasedRlEnvCfg) -> ManagerBasedRlEnvCfg:
   rewards["pitch_excess"].params["max_pitch"] = 0.61  # 35 deg nose-down
   for name in ("stand_pose", "stand_still"):
     rewards[name].params["start"] = timing["stand_start"]
-  rewards["torque_excess"].params["fraction"] = POWER_FRACTION
   # A hard kick needs a big, sudden action: half DonkeyKick's smoothness penalties.
   rewards["action_rate"].weight = -0.05
   rewards["joint_acc"].weight = -1.25e-7
-
-  vel_terms = []
-  for actuator in cfg.scene.entities["robot"].articulation.actuators:
-    assert isinstance(actuator, DcMotorActuatorCfg), "QuickBuck needs DC motor actuators"
-    name = f"joint_vel_excess_{_group_name(actuator)}"
-    rewards[name] = RewardTermCfg(
-      func=mdp.joint_vel_excess,
-      weight=JOINT_VEL_EXCESS_WEIGHT,
-      params={
-        "max_vel": POWER_FRACTION * actuator.velocity_limit,
-        "asset_cfg": SceneEntityCfg("robot", joint_names=actuator.target_names_expr),
-      },
-    )
-    vel_terms.append(name)
-
-  if "penalty_ramp" in cfg.curriculum:  # not in play mode
-    ramp = cfg.curriculum["penalty_ramp"].params
-    ramp["term_names"] = [n for n in ramp["term_names"] if n != "joint_vel_excess"] + vel_terms
+  apply_power_fraction(cfg, POWER_FRACTION, JOINT_VEL_EXCESS_WEIGHT)
 
   ##
   # Terminations and metrics

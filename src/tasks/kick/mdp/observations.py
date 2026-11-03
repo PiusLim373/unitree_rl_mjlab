@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from .rewards import _time
+
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
@@ -11,8 +13,8 @@ if TYPE_CHECKING:
 def kick_phase(env: ManagerBasedRlEnv, duration: float) -> torch.Tensor:
   """Time since the kick was triggered as a fraction of duration, held at 1 after.
 
-  Episodes start at the trigger, so this is the episode time. The deploy computes
-  the same from its step counter (kick_phase in deploy/.../observations.h).
+  Episodes start at the trigger, so this is the episode time (later for an episode
+  that began mid-flip, _time). The deploy computes the same from its step counter
+  (kick_phase in deploy/.../observations.h).
   """
-  t = env.episode_length_buf.float() * env.step_dt
-  return torch.clamp(t / duration, max=1.0).unsqueeze(1)
+  return torch.clamp(_time(env) / duration, max=1.0).unsqueeze(1)

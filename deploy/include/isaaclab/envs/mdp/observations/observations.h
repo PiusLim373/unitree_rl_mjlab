@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include "isaaclab/envs/manager_based_rl_env.h"
 
 namespace isaaclab
@@ -115,10 +117,25 @@ REGISTER_OBSERVATION(last_action)
 //                    (left = +y). Both combine (diagonals); the sticks are ignored while any
 //                    driving D-pad direction is held, and the D-pad doesn't drive while L2 or
 //                    R2 is held (button combos such as L2 + up).
+// hold_velocity_commands: set by State_Velocity when a skill hands over to it (a skill's
+// D-pad combo may still be held); the command reads 0 until the sticks are centred and
+// the D-pad released once.
+inline std::atomic<bool> hold_velocity_commands{false};
+
 REGISTER_OBSERVATION(velocity_commands)
 {
     std::vector<float> obs(3, 0.0f);
     auto & joystick = env->robot->data.joystick;
+
+    if (hold_velocity_commands)
+    {
+        constexpr float kCentred = 0.1f;  // State_Velocity's stop_check max_stick
+        const bool neutral = std::fabs(joystick->lx()) <= kCentred && std::fabs(joystick->ly()) <= kCentred
+            && std::fabs(joystick->rx()) <= kCentred && !joystick->up.pressed && !joystick->down.pressed
+            && !joystick->left.pressed && !joystick->right.pressed;
+        if (!neutral) return obs;
+        hold_velocity_commands = false;
+    }
 
     const auto cmd_cfg = env->cfg["commands"]["base_velocity"];
     const auto cfg = cmd_cfg["ranges"];
