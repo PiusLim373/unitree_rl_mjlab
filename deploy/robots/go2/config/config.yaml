@@ -109,8 +109,10 @@ FSM:
     ts: [0, 1.5]
     qs: [
       [],
-      # JointLock's first keyframe and Recovery's lying_pose, SDK motor order.
-      [0.0, 1.36, -2.65, 0.0, 1.36, -2.65, 0.0, 1.36, -2.65, 0.0, 1.36, -2.65],
+      # SDK motor order (FR, FL, RR, RL). Rear legs as JointLock's first keyframe and
+      # Recovery's lying_pose; front legs folded less, nose up, so the head LiDAR clears
+      # the floor (at the full fold it touched and stopped spinning).
+      [0.0, 1.2, -2.4, 0.0, 1.2, -2.4, 0.0, 1.36, -2.65, 0.0, 1.36, -2.65],
     ]
     # Then Damping by itself, like Recovery: once every joint has held the
     # lying pose for hold_time after the keyframes, or after timeout either way.
