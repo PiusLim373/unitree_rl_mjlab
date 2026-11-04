@@ -1,4 +1,4 @@
-"""SideFlip and FrontFlip task configurations: one full turn, landing on all four feet.
+"""SideFlip, FrontFlip and BackFlip task configurations: one full turn, landing on all four feet.
 
 The flip is triggered at t = 0 with the robot standing (the deploy starts it from
 JointLock or from Velocity standing still, like the kicks), turns once, lands on its
@@ -22,6 +22,11 @@ off as the motor saturation penalty ramped in: v5 frees the launch from that pen
 starts some training episodes in the air partway through the flip (reset_mid_flip).
 v6 to v13 built the flip by fine-tuning one run after another; the multistage recipe
 (front_flip_stage, scripts/train_front_flip.py) trains it from scratch in stages instead.
+
+BackFlip: one turn nose-up, over its back, by FrontFlip's multistage recipe (back_flip_stage)
+with the front and rear feet trading roles: the turn starts on the rear feet and the front
+feet catch the ground. A short flip comes down on the chin, where the LiDAR sits, so from
+stage 2 a crash there always costs (head_crash).
 
 Built from a finished DonkeyKick configuration (to_flip_env_cfg), like QuickBuck: the
 start poses, terrain mix, randomisation, observations, actions, body-contact
@@ -195,6 +200,17 @@ FRONT_FLIP_FEET_IMPACT = {"weight": -10.0, "force_threshold": 300.0}
 FRONT_FLIP_REAR_STAGGER_WEIGHT = -30.0
 
 ##
+# BackFlip
+##
+
+# -1: nose up (negative about the left axis, right-hand rule).
+BACK_FLIP_DIRECTION = -1.0
+
+# Mid-flip starts: FrontFlip's flight mirrored front to back (it drifts back, so this drifts
+# forward); a guess until the backflip has a flight of its own.
+BACK_FLIP_MID_START = {**FRONT_FLIP_MID_START, "fwd_vel": (0.1, 0.45)}
+
+##
 # Shared
 ##
 
@@ -233,7 +249,9 @@ TERMINATION_WEIGHT = -250.0
 # multistage: catch's pair_window / pair_full / first_pay (with crash_after_catch, a crash
 # after either rear foot touched down costs); multistage v2: landing_pose (landing_pose's
 # weight and settings), feet_impact (the feet's landing penalty weight; v3: and threshold,
-# in place of LANDING_FORCE's).
+# in place of LANDING_FORCE's). BackFlip: front_catch (the pairs trade roles: the front feet
+# catch, and the rear ones pivot and count for front_landing), head_crash (flip_termination
+# never waives a crash on the head or chin).
 SIDE_FLIP = {
   "axis": 0,
   "direction": FLIP_DIRECTION,
@@ -280,6 +298,13 @@ FRONT_FLIP = {
   "landing_pose": FRONT_FLIP_LANDING_POSE,
   "feet_impact": FRONT_FLIP_FEET_IMPACT,
 }
+BACK_FLIP = {
+  **FRONT_FLIP,
+  "direction": BACK_FLIP_DIRECTION,
+  "mid_flip": BACK_FLIP_MID_START,
+  "front_catch": True,
+  "head_crash": True,
+}
 
 # Multistage (scripts/train_front_flip.py): FRONT_FLIP from scratch in four stages, each
 # adding the rules the fine-tune runs added, in their order: 1 = v6's (finding the flip),
@@ -293,16 +318,29 @@ FRONT_FLIP_STAGE_KEYS = {
 }
 # Settings a stage has in place of FRONT_FLIP's.
 FRONT_FLIP_STAGE_OVERRIDES = {1: {"catch": FRONT_FLIP_CATCH_STAGE1}}
+# BackFlip: the same stages, the head rule from stage 2 (stage 1 finds the flip with a short
+# crash free, as FrontFlip's did).
+BACK_FLIP_STAGE_KEYS = {**FRONT_FLIP_STAGE_KEYS, 2: FRONT_FLIP_STAGE_KEYS[2] + ("head_crash",)}
+
+
+def flip_stage(spec: dict, stage_keys: dict, overrides: dict, stage: int) -> dict:
+  """`spec` without the keys later stages add (stage_keys), with the stage's overrides
+  (stage 4 = spec)."""
+  if stage not in (1, 2, 3, 4):
+    raise ValueError(f"Flip stage {stage}: 1 to 4")
+  later = {k for s, keys in stage_keys.items() if s > stage for k in keys}
+  staged = {k: v for k, v in spec.items() if k not in later}
+  return {**staged, **overrides.get(stage, {})}
 
 
 def front_flip_stage(stage: int) -> dict:
-  """FRONT_FLIP without the keys later stages add, with the stage's overrides (stage 4 =
-  FRONT_FLIP)."""
-  if stage not in (1, 2, 3, 4):
-    raise ValueError(f"FrontFlip stage {stage}: 1 to 4")
-  later = {k for s, keys in FRONT_FLIP_STAGE_KEYS.items() if s > stage for k in keys}
-  spec = {k: v for k, v in FRONT_FLIP.items() if k not in later}
-  return {**spec, **FRONT_FLIP_STAGE_OVERRIDES.get(stage, {})}
+  """FRONT_FLIP at a multistage stage (stage 4 = FRONT_FLIP)."""
+  return flip_stage(FRONT_FLIP, FRONT_FLIP_STAGE_KEYS, FRONT_FLIP_STAGE_OVERRIDES, stage)
+
+
+def back_flip_stage(stage: int) -> dict:
+  """BACK_FLIP at a multistage stage (stage 4 = BACK_FLIP)."""
+  return flip_stage(BACK_FLIP, BACK_FLIP_STAGE_KEYS, FRONT_FLIP_STAGE_OVERRIDES, stage)
 
 
 def to_flip_env_cfg(
@@ -316,9 +354,10 @@ def to_flip_env_cfg(
   rear_feet_pattern: str | None = None,
   knee_pattern: str | None = None,
   knee_force_sensor: str | None = None,
+  head_pattern: str | None = None,
 ) -> ManagerBasedRlEnvCfg:
   """Turn a robot's DonkeyKick configuration into the flip `spec` (SIDE_FLIP,
-  FRONT_FLIP) in place; returned.
+  FRONT_FLIP, BACK_FLIP) in place; returned.
 
   feet_pattern matches all four feet's contact geoms in DonkeyKick's feet sensor
   (front_feet_pattern / rear_feet_pattern the front and rear pairs, for the catch, the
@@ -326,11 +365,18 @@ def to_flip_env_cfg(
   (whole-body angular momentum, world frame); limbs_sensor / limbs_pattern match the
   feet, calves and thighs against the terrain (airborne = none of them touching), and
   knee_pattern the thighs and calves among them (knee_down); knee_force_sensor matches
-  the thighs and calves against the terrain with contact force (knee_impact). The
-  robot entity must use DC motor actuators (apply_power_fraction). Mid-flip starts need
-  their stances, hip_x and body_points set per robot afterwards.
+  the thighs and calves against the terrain with contact force (knee_impact); head_pattern
+  the head and chin among the body contact sensor's geoms (head_crash). The robot entity
+  must use DC motor actuators (apply_power_fraction). Mid-flip starts need their stances,
+  hip_x and body_points set per robot afterwards.
   """
   timing, episode_s = spec["timing"], spec["episode_s"]
+  # The pair that catches the ground late in the turn and the pair the turn starts on
+  # (front_landing counts it): FrontFlip's rear and front feet, BackFlip's the other way.
+  if spec.get("front_catch"):
+    catch_feet, pivot_feet, catch_key, pivot_key = front_feet_pattern, rear_feet_pattern, "front_catch", "rear_pivot"
+  else:
+    catch_feet, pivot_feet, catch_key, pivot_key = rear_feet_pattern, front_feet_pattern, "rear_catch", "front_pivot"
   # axis 0 is the terms' default, so SideFlip's term parameters don't list it.
   axis = {"axis": spec["axis"]} if spec["axis"] else {}
   fixed = {"fixed_axis": True} if spec.get("fixed_axis") else {}
@@ -394,7 +440,7 @@ def to_flip_env_cfg(
     func=mdp.airborne, weight=0.5, params={**limbs, "start": 0.0, "end": timing["spin_end"]}
   )
   # Once: landed on the feet after one full turn (not two).
-  touch = front_feet_pattern if spec.get("front_landing") else feet_pattern
+  touch = pivot_feet if spec.get("front_landing") else feet_pattern
   rewards["flip_landing"] = RewardTermCfg(
     func=mdp.flip_landing,
     weight=5.0,
@@ -402,25 +448,26 @@ def to_flip_env_cfg(
   )
   if spec.get("clean_landing"):
     rewards["flip_landing"].params["contact_term"] = "body_contact"
-  # Once: the rear feet catch the ground late in the turn, before any body part.
+  # Once: the catch pair (rear feet; BackFlip front) on the ground late in the turn, before
+  # any body part.
   if spec.get("catch"):
     catch = dict(spec["catch"])
-    rewards["rear_catch"] = RewardTermCfg(
+    rewards[catch_key] = RewardTermCfg(
       func=mdp.rear_catch,
       weight=catch.pop("weight"),
-      params={**rotation, "touch_sensor": sensor_name, "touch_pattern": rear_feet_pattern, **catch, **gate},
+      params={**rotation, "touch_sensor": sensor_name, "touch_pattern": catch_feet, **catch, **gate},
     )
-  # The turn made on the front feet before the liftoff.
+  # The turn made on the pivot pair (front feet; BackFlip rear) before the liftoff.
   if spec.get("pivot"):
     pivot = dict(spec["pivot"])
-    rewards["front_pivot"] = RewardTermCfg(
+    rewards[pivot_key] = RewardTermCfg(
       func=mdp.front_pivot,
       weight=pivot.pop("weight"),
       params={
         **rotation,
         "feet_sensor": sensor_name,
-        "front_pattern": front_feet_pattern,
-        "rear_pattern": rear_feet_pattern,
+        "front_pattern": pivot_feet,
+        "rear_pattern": catch_feet,
         **pivot,
       },
     )
@@ -438,7 +485,7 @@ def to_flip_env_cfg(
       rewards[name].func = after_landing[name]
       rewards[name].params["landing_term"] = "flip_landing"
       if spec.get("stand_from_catch"):
-        rewards[name].params["catch_term"] = "rear_catch"
+        rewards[name].params["catch_term"] = catch_key
   # Up off the knees once caught or landed: a cost for kneeling, and a pull to the stand
   # pose from far off.
   if spec.get("knee_down"):
@@ -449,7 +496,7 @@ def to_flip_env_cfg(
         "sensor_name": limbs_sensor,
         "geom_pattern": knee_pattern,
         "landing_term": "flip_landing",
-        "catch_term": "rear_catch" if spec.get("catch") else None,
+        "catch_term": catch_key if spec.get("catch") else None,
       },
     )
   if spec.get("wide_stand"):
@@ -484,7 +531,7 @@ def to_flip_env_cfg(
     rewards["rear_stagger"] = RewardTermCfg(
       func=mdp.rear_stagger,
       weight=spec["rear_stagger"],
-      params={"sensor_name": sensor_name, "geom_pattern": rear_feet_pattern, "launch_term": progress_key},
+      params={"sensor_name": sensor_name, "geom_pattern": catch_feet, "launch_term": progress_key},
     )
   rewards["termination"].weight = TERMINATION_WEIGHT
   if spec.get("commit_turns") is not None:
@@ -494,10 +541,16 @@ def to_flip_env_cfg(
     if spec.get("crash_after_landing"):
       rewards["termination"].params["landing_term"] = "flip_landing"
     if spec.get("crash_after_catch"):
-      rewards["termination"].params["catch_term"] = "rear_catch"
+      rewards["termination"].params["catch_term"] = catch_key
       # A rear foot alone isn't a catch with pair_window, but a crash after it still costs.
       if spec["catch"].get("pair_window") is not None:
         rewards["termination"].params["catch_any"] = True
+    # A crash on the head or chin (the LiDAR) always costs.
+    if spec.get("head_crash"):
+      if head_pattern is None:
+        raise ValueError("head_crash needs head_pattern.")
+      rewards["termination"].params["head_sensor"] = cfg.terminations["body_contact"].params["sensor_name"]
+      rewards["termination"].params["head_pattern"] = head_pattern
   # Gentle (ramped in): soft four-foot landing, motors off their speed-dependent limit.
   impact = {"weight": -1.0, **LANDING_FORCE, **spec.get("feet_impact", {})}
   rewards["landing"] = RewardTermCfg(
@@ -569,11 +622,11 @@ def to_flip_env_cfg(
       cfg.metrics[name] = MetricsTermCfg(
         func=mdp.flip_landed, params={"landing_term": "flip_landing", "mid_start": mid}
       )
-    # x episode length = seconds after a rear-feet catch.
+    # x episode length = seconds after the catch.
     if spec.get("catch"):
       for name, mid in (("caught", False), ("caught_mid", True)):
         cfg.metrics[name] = MetricsTermCfg(
-          func=mdp.flip_caught, params={"catch_term": "rear_catch", "mid_start": mid}
+          func=mdp.flip_caught, params={"catch_term": catch_key, "mid_start": mid}
         )
 
   return cfg
@@ -607,4 +660,25 @@ def to_front_flip_env_cfg(
   return to_flip_env_cfg(
     cfg, front_flip_stage(stage), feet_pattern, angmom_sensor, limbs_sensor, limbs_pattern, front_feet_pattern,
     rear_feet_pattern, knee_pattern, knee_force_sensor,
+  )
+
+
+def to_back_flip_env_cfg(
+  cfg: ManagerBasedRlEnvCfg,
+  feet_pattern: str,
+  angmom_sensor: str,
+  limbs_sensor: str,
+  limbs_pattern: str,
+  front_feet_pattern: str,
+  rear_feet_pattern: str,
+  knee_pattern: str,
+  knee_force_sensor: str,
+  head_pattern: str,
+  stage: int = 4,
+) -> ManagerBasedRlEnvCfg:
+  """DonkeyKick configuration -> BackFlip (to_flip_env_cfg with BACK_FLIP, or the
+  multistage recipe's earlier stage)."""
+  return to_flip_env_cfg(
+    cfg, back_flip_stage(stage), feet_pattern, angmom_sensor, limbs_sensor, limbs_pattern, front_feet_pattern,
+    rear_feet_pattern, knee_pattern, knee_force_sensor, head_pattern,
   )

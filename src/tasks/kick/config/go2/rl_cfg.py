@@ -36,3 +36,10 @@ def unitree_go2_front_flip_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   cfg = unitree_go2_kick_ppo_runner_cfg()
   cfg.experiment_name = "go2_frontflip"
   return cfg
+
+
+def unitree_go2_back_flip_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+  """As DonkeyKick (same network, PPO and exploration switch), own experiment folder."""
+  cfg = unitree_go2_kick_ppo_runner_cfg()
+  cfg.experiment_name = "go2_backflip"
+  return cfg

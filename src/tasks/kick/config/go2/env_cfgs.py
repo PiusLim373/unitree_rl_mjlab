@@ -1,11 +1,11 @@
-"""Unitree Go2 DonkeyKick, QuickBuck, SideFlip and FrontFlip environment configurations."""
+"""Unitree Go2 DonkeyKick, QuickBuck, SideFlip, FrontFlip and BackFlip environment configurations."""
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg, RayCastSensorCfg
 
 from src.assets.robots import get_go2_dc_robot_cfg, get_go2_robot_cfg
 from src.tasks.kick.buck_env_cfg import to_buck_env_cfg
-from src.tasks.kick.flip_env_cfg import to_front_flip_env_cfg, to_side_flip_env_cfg
+from src.tasks.kick.flip_env_cfg import to_back_flip_env_cfg, to_front_flip_env_cfg, to_side_flip_env_cfg
 from src.tasks.kick.kick_env_cfg import make_kick_env_cfg
 from src.tasks.velocity.mdp import LiftedGridPatternCfg
 
@@ -15,6 +15,8 @@ _FRONT_FEET = r"^F[LR]_foot_collision$"
 _ALL_FEET = r"^[FR][LR]_foot_collision$"
 _LIMBS = r"^[FR][LR]_(thigh|calf\d|foot)_collision$"
 _KNEES = r"^[FR][LR]_(thigh|calf\d)_collision$"
+# The head and chin (base2 / base3; the L1 LiDAR sits at the chin).
+_HEAD = r"^base[23]_collision$"
 
 # The two stances the deploy starts the kick from (joint regex -> rad).
 FIXSTAND_STANCE = {r".*hip_joint": 0.0, r".*thigh_joint": 0.8, r".*calf_joint": -1.5}
@@ -181,12 +183,9 @@ def unitree_go2_side_flip_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   return to_side_flip_env_cfg(_flip_base_cfg(play), **_FLIP_SENSORS)
 
 
-def unitree_go2_front_flip_env_cfg(play: bool = False, stage: int = 4) -> ManagerBasedRlEnvCfg:
-  """Create Unitree Go2 FrontFlip configuration (one turn nose-down, over its back).
-
-  The flips' DonkeyKick-based setup, then FrontFlip's timing and rewards; stage 1 to 3
-  are the multistage recipe's training stages (front_flip_stage), 4 the full FrontFlip.
-  """
+def _nose_flip_env_cfg(play: bool, stage: int, back: bool) -> ManagerBasedRlEnvCfg:
+  """The flips' DonkeyKick-based setup with the knees_ground sensor, then FrontFlip's (or
+  BackFlip's) timing and rewards, and the mid-flip starts' leg poses."""
   cfg = _flip_base_cfg(play)
   # Thighs and calves against the terrain with contact force (peak over the step's
   # substeps): the knee impact penalty.
@@ -200,13 +199,35 @@ def unitree_go2_front_flip_env_cfg(play: bool = False, stage: int = 4) -> Manage
     history_length=4,
   )
   cfg.scene.sensors = cfg.scene.sensors + (knees_ground_cfg,)
-  cfg = to_front_flip_env_cfg(
-    cfg, **_FLIP_SENSORS, front_feet_pattern=_FRONT_FEET, rear_feet_pattern=_REAR_FEET,
-    knee_pattern=_KNEES, knee_force_sensor="knees_ground", stage=stage,
-  )
+  patterns = {
+    **_FLIP_SENSORS, "front_feet_pattern": _FRONT_FEET, "rear_feet_pattern": _REAR_FEET,
+    "knee_pattern": _KNEES, "knee_force_sensor": "knees_ground", "stage": stage,
+  }
+  if back:
+    cfg = to_back_flip_env_cfg(cfg, **patterns, head_pattern=_HEAD)
+  else:
+    cfg = to_front_flip_env_cfg(cfg, **patterns)
   if "mid_flip_start" in cfg.events:  # training only
     mid = cfg.events["mid_flip_start"].params
     mid["stances"] = (FLIP_TUCKED_STANCE, VELOCITY_STANCE)
     mid["hip_x"] = _HIP_X
     mid["body_points"] = _BODY_POINTS
   return cfg
+
+
+def unitree_go2_front_flip_env_cfg(play: bool = False, stage: int = 4) -> ManagerBasedRlEnvCfg:
+  """Create Unitree Go2 FrontFlip configuration (one turn nose-down, over its back).
+
+  The flips' DonkeyKick-based setup, then FrontFlip's timing and rewards; stage 1 to 3
+  are the multistage recipe's training stages (front_flip_stage), 4 the full FrontFlip.
+  """
+  return _nose_flip_env_cfg(play, stage, back=False)
+
+
+def unitree_go2_back_flip_env_cfg(play: bool = False, stage: int = 4) -> ManagerBasedRlEnvCfg:
+  """Create Unitree Go2 BackFlip configuration (one turn nose-up, over its back).
+
+  FrontFlip's setup with BackFlip's rewards (back_flip_stage: stage 1 to 3 train, 4 the
+  full BackFlip); the mid-flip starts use FrontFlip's leg poses.
+  """
+  return _nose_flip_env_cfg(play, stage, back=True)

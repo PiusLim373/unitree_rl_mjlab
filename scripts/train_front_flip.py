@@ -1,4 +1,5 @@
-"""Train the front flip from scratch in stages: the multistage recipe.
+"""Train the front flip (or, with --flip back, the backflip) from scratch in stages: the
+multistage recipe.
 
 v6 to v13 built the front flip by fine-tuning one run after another, changing the rules
 by hand in between. This runs the same steps as one recipe (front_flip_stage in
@@ -22,16 +23,20 @@ v3: stage 4 only, from v2's stage 3: the feet's impact costs twice as much, from
 force (v2's front feet landed hard, the rear softly). v2's code is in
 logs/rsl_rl/go2_frontflip/frontflip_v2_multistage_code_backup.
 
-Runs are named frontflip_v<version>-<stage>_multistage. The summary (runs, checkpoints,
-results, checks, status) is logs/rsl_rl/go2_frontflip/frontflip_v<version>_multistage.json;
-each stage's training output goes next to it (..._stdout.log), its eval into the run
-folder (eval.log, eval.json).
+BackFlip (--flip back): the same stages (back_flip_stage), the front feet catching. Its
+checks read the catch pair's knees, and stage 4 also limits crashes on the head or chin.
+
+Runs are named frontflip_v<version>-<stage>_multistage (backflip_...). The summary (runs,
+checkpoints, results, checks, status) is logs/rsl_rl/go2_frontflip/frontflip_v<version>_multistage.json
+(go2_backflip/backflip_...); each stage's training output goes next to it (..._stdout.log),
+its eval into the run folder (eval.log, eval.json).
 
   python scripts/train_front_flip.py --version 1
   # Any change to the recipe is a new version; e.g. only stage 4 again, from an earlier
   # version's stage 3 checkpoint:
   python scripts/train_front_flip.py --version 3 --start-stage 4 \
     --from-checkpoint logs/rsl_rl/go2_frontflip/<run>/model_10000.pt
+  python scripts/train_front_flip.py --flip back --version 1
 """
 
 import json
@@ -43,11 +48,10 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import tyro
 
-EXPERIMENT = Path("logs/rsl_rl/go2_frontflip")
-EVAL_TASK = "Unitree-Go2-FrontFlip"
 # The flip's code, copied into each stage's run folder.
 CODE = (
   "src/tasks/kick/mdp/flip.py",
@@ -79,16 +83,37 @@ STAGES = {
   2: Stage("Unitree-Go2-FrontFlip-S2", 1000, {"landed_up": 80.0}, "a clean landing, still up at the end"),
   3: Stage("Unitree-Go2-FrontFlip-S3", 3000, {"success": 85.0}, "up off the knees, standing still"),
   4: Stage(
-    EVAL_TASK, 4000, {"success": 90.0, "flat": 99.0}, "legs under the hips, no knee slam (the full FrontFlip)",
-    {"knee_touch": 25.0, "landing_force": 450.0},
+    "Unitree-Go2-FrontFlip", 4000, {"success": 90.0, "flat": 99.0},
+    "legs under the hips, no knee slam (the full FrontFlip)", {"knee_touch": 25.0, "landing_force": 450.0},
   ),
+}
+# BackFlip: FrontFlip's stages with the front feet catching; stage 4 also limits crashes on
+# the head or chin (head_crash, % of flips).
+BACK_STAGES = {
+  1: Stage(
+    "Unitree-Go2-BackFlip-S1", 6000, {"paired": 70.0, "catch_knee_td_cm": 8.0},
+    "over its back, caught on both front feet, legs under the hips",
+  ),
+  2: Stage("Unitree-Go2-BackFlip-S2", 1000, {"landed_up": 80.0}, "a clean landing, still up at the end"),
+  3: Stage("Unitree-Go2-BackFlip-S3", 3000, {"success": 85.0}, "up off the knees, standing still"),
+  4: Stage(
+    "Unitree-Go2-BackFlip", 4000, {"success": 90.0, "flat": 99.0},
+    "legs under the hips, no knee slam (the full BackFlip)",
+    {"knee_touch": 25.0, "landing_force": 450.0, "head_crash": 1.0},
+  ),
+}
+# Each flip's experiment folder and stages (the last stage's task is the eval task).
+FLIPS = {
+  "front": (Path("logs/rsl_rl/go2_frontflip"), STAGES),
+  "back": (Path("logs/rsl_rl/go2_backflip"), BACK_STAGES),
 }
 
 
 @dataclass(frozen=True)
 class TrainFrontFlipConfig:
   version: int
-  """The recipe's version (runs frontflip_v<version>-<stage>_multistage)."""
+  """The recipe's version (runs <flip>flip_v<version>-<stage>_multistage)."""
+  flip: Literal["front", "back"] = "front"
   start_stage: int = 1
   from_checkpoint: str | None = None
   """Where a later start_stage begins (default: this version's previous stage)."""
@@ -102,8 +127,8 @@ class TrainFrontFlipConfig:
   eval_rounds: int = 2
 
 
-def run_name(version: int, stage: int) -> str:
-  return f"frontflip_v{version}-{stage}_multistage"
+def run_name(flip: str, version: int, stage: int) -> str:
+  return f"{flip}flip_v{version}-{stage}_multistage"
 
 
 def last_checkpoint(run: Path) -> Path | None:
@@ -112,15 +137,18 @@ def last_checkpoint(run: Path) -> Path | None:
 
 
 def main():
-  from src.tasks.kick.flip_env_cfg import front_flip_stage
+  from src.tasks.kick.flip_env_cfg import back_flip_stage, front_flip_stage
 
   cfg = tyro.cli(TrainFrontFlipConfig, prog=sys.argv[0])
   if not Path("scripts/train.py").exists():
     sys.exit("Run from the unitree_rl_mjlab folder.")
-  if cfg.start_stage not in STAGES:
-    sys.exit(f"--start-stage: one of {list(STAGES)}")
-  EXPERIMENT.mkdir(parents=True, exist_ok=True)
-  summary_path = EXPERIMENT / f"frontflip_v{cfg.version}_multistage.json"
+  experiment, stages = FLIPS[cfg.flip]
+  flip_stage = back_flip_stage if cfg.flip == "back" else front_flip_stage
+  eval_task = stages[max(stages)].task
+  if cfg.start_stage not in stages:
+    sys.exit(f"--start-stage: one of {list(stages)}")
+  experiment.mkdir(parents=True, exist_ok=True)
+  summary_path = experiment / f"{cfg.flip}flip_v{cfg.version}_multistage.json"
   if summary_path.exists():
     summary = json.loads(summary_path.read_text())
     if cfg.start_stage == 1 or any(s["stage"] >= cfg.start_stage for s in summary["stages"]):
@@ -134,17 +162,17 @@ def main():
     if not prev:
       sys.exit(f"--from-checkpoint: no passed stage {cfg.start_stage - 1} in {summary_path}")
     ckpt = Path(prev[-1]["checkpoint"])
-  if ckpt is not None and (not ckpt.exists() or ckpt.parent.parent.resolve() != EXPERIMENT.resolve()):
-    sys.exit(f"{ckpt}: not a checkpoint in {EXPERIMENT}")
+  if ckpt is not None and (not ckpt.exists() or ckpt.parent.parent.resolve() != experiment.resolve()):
+    sys.exit(f"{ckpt}: not a checkpoint in {experiment}")
 
   def save(status):
     summary["status"] = status
     summary_path.write_text(json.dumps(summary, indent=2))
 
-  for n in range(cfg.start_stage, max(STAGES) + 1):
-    stage = STAGES[n]
+  for n in range(cfg.start_stage, max(stages) + 1):
+    stage = stages[n]
     iterations = cfg.iterations[n - 1] if cfg.iterations else stage.iterations
-    name = run_name(cfg.version, n)
+    name = run_name(cfg.flip, cfg.version, n)
     code = {f: Path(f).read_bytes() for f in CODE}  # as this stage trains with it
     save(f"stage {n} training")
     print(f"[STAGE {n}] {stage.task}: {stage.goal}; {iterations} iterations from {ckpt or 'scratch'}", flush=True)
@@ -161,9 +189,9 @@ def main():
         f"--agent.load-checkpoint={re.escape(ckpt.name)}$",
       ]
     t0 = time.time()
-    with open(EXPERIMENT / f"{name}_stdout.log", "w") as log:
+    with open(experiment / f"{name}_stdout.log", "w") as log:
       code_ok = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode == 0
-    runs = sorted(EXPERIMENT.glob(f"*_{name}"))
+    runs = sorted(experiment.glob(f"*_{name}"))
     run = runs[-1] if runs else None
     new_ckpt = last_checkpoint(run) if run else None
     if not code_ok or new_ckpt is None:
@@ -176,9 +204,9 @@ def main():
     print(f"[STAGE {n}] trained: {new_ckpt}; evaluating", flush=True)
     result_path = run / "eval.json"
     cmd = [
-      sys.executable, "scripts/eval_flip.py", "--task", EVAL_TASK, "--policies", f"s{n}={new_ckpt}",
+      sys.executable, "scripts/eval_flip.py", "--task", eval_task, "--policies", f"s{n}={new_ckpt}",
       "--num-envs", str(cfg.eval_envs), "--rounds", str(cfg.eval_rounds), "--json", str(result_path),
-      "--pair-window", str(front_flip_stage(n)["catch"]["pair_window"]),
+      "--pair-window", str(flip_stage(n)["catch"]["pair_window"]),
     ]
     with open(run / "eval.log", "w") as log:
       eval_ok = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode == 0

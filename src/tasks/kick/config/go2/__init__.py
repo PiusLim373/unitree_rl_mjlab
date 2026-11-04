@@ -2,12 +2,14 @@ from mjlab.tasks.registry import register_mjlab_task
 from src.tasks.kick.rl import FlipRunner, KickRunner
 
 from .env_cfgs import (
+  unitree_go2_back_flip_env_cfg,
   unitree_go2_buck_env_cfg,
   unitree_go2_front_flip_env_cfg,
   unitree_go2_kick_env_cfg,
   unitree_go2_side_flip_env_cfg,
 )
 from .rl_cfg import (
+  unitree_go2_back_flip_ppo_runner_cfg,
   unitree_go2_buck_ppo_runner_cfg,
   unitree_go2_front_flip_ppo_runner_cfg,
   unitree_go2_kick_ppo_runner_cfg,
@@ -62,5 +64,23 @@ for _stage in (1, 2, 3):
     env_cfg=unitree_go2_front_flip_env_cfg(stage=_stage),
     play_env_cfg=unitree_go2_front_flip_env_cfg(play=True, stage=_stage),
     rl_cfg=unitree_go2_front_flip_ppo_runner_cfg(),
+    runner_cls=KickRunner,
+  )
+
+# One turn nose-up, by the same multistage recipe (Unitree-Go2-BackFlip-S1 to -S3 train,
+# this is stage 4): left-right symmetric, so KickRunner like the front flip.
+register_mjlab_task(
+  task_id="Unitree-Go2-BackFlip",
+  env_cfg=unitree_go2_back_flip_env_cfg(),
+  play_env_cfg=unitree_go2_back_flip_env_cfg(play=True),
+  rl_cfg=unitree_go2_back_flip_ppo_runner_cfg(),
+  runner_cls=KickRunner,
+)
+for _stage in (1, 2, 3):
+  register_mjlab_task(
+    task_id=f"Unitree-Go2-BackFlip-S{_stage}",
+    env_cfg=unitree_go2_back_flip_env_cfg(stage=_stage),
+    play_env_cfg=unitree_go2_back_flip_env_cfg(play=True, stage=_stage),
+    rl_cfg=unitree_go2_back_flip_ppo_runner_cfg(),
     runner_cls=KickRunner,
   )

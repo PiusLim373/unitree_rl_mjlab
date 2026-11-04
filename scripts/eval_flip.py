@@ -1,9 +1,9 @@
-"""Script to evaluate SideFlip or FrontFlip policies on the same standing starts.
+"""Script to evaluate SideFlip, FrontFlip or BackFlip policies on the same standing starts.
 
 Each policy runs deterministically on the task's start distribution (same seeds, so the
 same starts) for one flip per robot (the training episode). SideFlip: as trained (the
 left flip, policy.onnx) and mirrored (the right flip, policy_right.onnx; unless
---no-right). FrontFlip: mirror-averaged (policy.onnx, what deploys) and plain
+--no-right). FrontFlip and BackFlip: mirror-averaged (policy.onnx, what deploys) and plain
 (policy_raw.onnx). The rotation is measured here over the whole run, not read from the
 rewards, so a second turn shows: the world rate about the flip's axis as it was at the
 start (made level). A spin about another axis adds nothing (FrontFlip v1 spun round on its
@@ -30,7 +30,10 @@ front feet, which the body rate counted). Reports:
     feet down within the catch's pair_window (multistage), landed and still up at the end
     (success without the done check), and the left/right joint mismatch (sum of
     |q - mirror(q)|^2 dt: v11; and in the air only: v13)
-  - failure modes (with the body parts down at a crash: body, head, chin, hips), by terrain
+  - failure modes (with the body parts down at a crash: body, head, chin, hips), by terrain,
+    and the share of flips that crash with the head or chin down
+  - BackFlip: FrontFlip's report with the pairs trading roles (the turn on the rear feet
+    before the liftoff, the front-feet catch, its pair gap and knees)
 
 Example:
   python scripts/eval_flip.py --policies v1=logs/rsl_rl/go2_sideflip/<run>/model_6000.pt
@@ -68,7 +71,7 @@ class EvalFlipConfig:
   policies: tuple[str, ...]
   """name=checkpoint pairs (model_N.pt from a run of `task`)."""
   task: str = "Unitree-Go2-SideFlip"
-  """Unitree-Go2-SideFlip or Unitree-Go2-FrontFlip."""
+  """Unitree-Go2-SideFlip, Unitree-Go2-FrontFlip or Unitree-Go2-BackFlip."""
   rounds: int = 2
   num_envs: int = 1024
   right: bool = True
@@ -79,8 +82,8 @@ class EvalFlipConfig:
   """Also write each variant's headline results (%, ms, N) to this file (read by
   scripts/train_front_flip.py's pass checks)."""
   pair_window: float | None = None
-  """Both rear feet down within this (s) count as paired (default: the task's catch
-  window; a multistage stage's own, from scripts/train_front_flip.py)."""
+  """Both catch feet (rear; BackFlip front) down within this (s) count as paired (default:
+  the task's catch window; a multistage stage's own, from scripts/train_front_flip.py)."""
 
 
 def main():
@@ -88,15 +91,20 @@ def main():
   import mjlab.tasks  # noqa: F401
   import src.tasks  # noqa: F401
   from src.assets.robots.unitree_go2.go2_constants import GO2_CALF_TOP_SPEED, GO2_HIP_THIGH_TOP_SPEED
-  from src.tasks.kick.flip_env_cfg import FRONT_FLIP, LIFTOFF_UP_VEL, SIDE_FLIP
+  from src.tasks.kick.flip_env_cfg import BACK_FLIP, FRONT_FLIP, LIFTOFF_UP_VEL, SIDE_FLIP
   from src.tasks.kick.kick_env_cfg import STAND_CHECK
   from src.tasks.recovery.mdp.rewards import _slot_columns
   from src.tasks.velocity.rl.symmetry import _get_maps
 
   cfg = tyro.cli(EvalFlipConfig, prog=sys.argv[0])
   policies = dict(p.split("=", 1) for p in cfg.policies)
-  front = "FrontFlip" in cfg.task
-  spec = FRONT_FLIP if front else SIDE_FLIP
+  back = "BackFlip" in cfg.task
+  # The front flip and backflip: a turn about the left axis (mirror-averaged, a catch).
+  front = back or "FrontFlip" in cfg.task
+  spec = BACK_FLIP if back else FRONT_FLIP if front else SIDE_FLIP
+  # The pair that catches the ground and the other one: FrontFlip's rear and front feet.
+  pair, other_pair = ("F", "R") if back else ("R", "F")
+  pair_word, other_word = ("front", "rear") if back else ("rear", "front")
   configure_torch_backends()
   device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")
   n = cfg.num_envs
@@ -130,7 +138,7 @@ def main():
   robot, dt, tm = base.scene["robot"], base.step_dt, base.termination_manager
   feet_sensor, limbs_sensor = base.scene["feet_ground"], base.scene["limbs_ground"]
   feet_cols = torch.tensor(_slot_columns(feet_sensor, r"^[FR][LR]_foot_collision$")[0], device=device)
-  rear_cols = torch.tensor(_slot_columns(feet_sensor, r"^R[LR]_foot_collision$")[0], device=device)
+  catch_cols = torch.tensor(_slot_columns(feet_sensor, rf"^{pair}[LR]_foot_collision$")[0], device=device)
   knee_cols = torch.tensor(_slot_columns(limbs_sensor, r"_(thigh|calf\d)_collision$")[0], device=device)
   # Thigh/calf contact force (FrontFlip's knees_ground sensor, v10; touches only without it).
   knee_force = base.scene.sensors.get("knees_ground")
@@ -141,6 +149,7 @@ def main():
   parts = [g.split("/")[-1].replace("_collision", "") for g in body_geoms]
   parts = [{"base1": "body", "base2": "head", "base3": "chin"}.get(p, p) for p in parts]
   part_bits = 2 ** torch.arange(len(parts), device=device)
+  head_bits = sum(1 << k for k, p in enumerate(parts) if p in ("head", "chin"))
   at_check = {}
   check = tm.compute
 
@@ -182,9 +191,11 @@ def main():
     device=device,
   )
   twin_sign = torch.tensor([-1.0 if "hip" in j else 1.0 for j in joint_names], device=device)
-  # Touchdown order: RL, RR, FL, FR (physics substeps; force history index 0 is the newest).
+  # Touchdown order: the catch pair, then the other (FrontFlip RL, RR, FL, FR; physics
+  # substeps; force history index 0 is the newest).
+  td_feet = (f"{pair}L", f"{pair}R", f"{other_pair}L", f"{other_pair}R")
   td_cols = torch.tensor(
-    [_slot_columns(feet_sensor, rf"^{f}_foot_collision$")[0][0] for f in ("RL", "RR", "FL", "FR")], device=device
+    [_slot_columns(feet_sensor, rf"^{f}_foot_collision$")[0][0] for f in td_feet], device=device
   )
   sub_dt = dt / env_cfg.decimation
   # Knees (calf body origins) and feet, front and rear pairs, for the touchdown posture.
@@ -202,7 +213,7 @@ def main():
   steps = int(round(run_s / dt))
   t_spin, t_stand, t_land = (spec["timing"][k] for k in ("spin_end", "stand_start", "land_by"))
   hold_steps = int(round(DONE_HOLD_S / dt))
-  # Both rear feet down within this (s) count as a paired catch (multistage).
+  # Both catch feet down within this (s) count as a paired catch (multistage).
   pair_window = cfg.pair_window or (spec.get("catch") or {}).get("pair_window") or 0.1
   axis = spec["axis"]
   x_axis = torch.tensor([1.0, 0.0, 0.0], device=device).expand(n, 3)
@@ -302,10 +313,10 @@ def main():
             new_lift = alive & airborne & rising & ~lifted
             lift_turns = torch.where(new_lift, turns, lift_turns)
             lifted |= new_lift
-          # Rear-feet catch (the episode is still running, so no body contact yet).
+          # The catch (the episode is still running, so no body contact yet).
           if front:
-            rear_down = (feet_sensor.data.found[:, rear_cols] > 0).any(dim=1)
-            new_catch = alive & lifted & rear_down & (turns >= 0.6) & ~caught
+            catch_down = (feet_sensor.data.found[:, catch_cols] > 0).any(dim=1)
+            new_catch = alive & lifted & catch_down & (turns >= 0.6) & ~caught
             catch_turns = torch.where(new_catch, turns, catch_turns)
             caught |= new_catch
           if front:
@@ -360,14 +371,15 @@ def main():
         along = torch.sum(travel * along0, dim=1)
         across = torch.sum(travel * across0, dim=1).abs()
         kneel = alive & (limbs_sensor.data.found[:, knee_cols] > 0).any(dim=1)  # thigh or calf down at the end
-        rear_gap = (td_t[:, 0] - td_t[:, 1]).abs()  # nan unless both rear feet came down
-        rear_late = torch.maximum(td_t[:, 0], td_t[:, 1]) > torch.minimum(td_t[:, 2], td_t[:, 3]) + 1e-6
+        catch_gap = (td_t[:, 0] - td_t[:, 1]).abs()  # nan unless both catch feet came down
+        catch_late = torch.maximum(td_t[:, 0], td_t[:, 1]) > torch.minimum(td_t[:, 2], td_t[:, 3]) + 1e-6
       cols = {k: v.cpu().numpy() for k, v in dict(
-        kneel=kneel, knee_hit=knee_hit, knee_peak=knee_peak, rear_gap=rear_gap, rear_late=rear_late, mirror=mirror,
+        kneel=kneel, knee_hit=knee_hit, knee_peak=knee_peak, catch_gap=catch_gap, catch_late=catch_late, mirror=mirror,
         mirror_air=mirror_air, why=why, lifted=lifted, turns=turns, height=height, air=air, pitch=pitch_max, landed=landed,
         land=land_peak, qd_frac=qd_frac, tau90=tau90_time, tau=tau_hit, tau_j=tau_j, tau_time=tau_time,
         t_done=t_done, heading=heading.abs(), along=along, across=across, tilt_max=tilt_max,
-        knee_up_front=knee_up[:, 0], knee_up_rear=knee_up[:, 1], knee_tau_front=knee_tau[:, 0],
+        knee_up_front=knee_up[:, 0], knee_up_rear=knee_up[:, 1], knee_up_catch=knee_up[:, 0 if back else 1],
+        knee_tau_front=knee_tau[:, 0],
         knee_tau_rear=knee_tau[:, 1],
         off=off_max, t_end=t_end, lift_turns=lift_turns, caught=caught, catch_turns=catch_turns, hit=hit).items()}
       for e in range(n):
@@ -379,7 +391,8 @@ def main():
           and r["tilt_max"] >= UPSIDE_DOWN and r["landed"]
         )
         r["success"] = r["landed_up"] and not np.isnan(r["t_done"])
-        r["paired"] = bool(r["caught"]) and r["rear_gap"] <= pair_window + 1e-6  # False when nan
+        r["paired"] = bool(r["caught"]) and r["catch_gap"] <= pair_window + 1e-6  # False when nan
+        r["head_crash"] = r["why"] == 1 and bool(int(r["hit"]) & head_bits)
         rows.append(r)
     results[name] = rows
   env.close()
@@ -434,14 +447,14 @@ def main():
   stat(f"travel along the flip (cm, + = {'forward' if front else 'its side'})", "along", "5.1f", scale=100)
   stat("drift across it (cm)", "across", "5.1f", scale=100)
   if front:
-    print("\nfront flip phases  (all flips: median / 95th)")
+    print(f"\n{'backflip' if back else 'front flip'} phases  (all flips: median / 95th)")
     stat("rotation at liftoff (deg)", "lift_turns", "6.0f", keep=lambda r: r["lifted"], scale=360.0)
     for nm in names:
       c = np.mean([r["caught"] for r in results[nm]])
-      print(f"  {'rear-feet catch (% of flips)':30s} {nm}: {100 * c:5.1f}%")
+      print(f"  {pair_word + '-feet catch (% of flips)':30s} {nm}: {100 * c:5.1f}%")
     for nm in names:
       c = np.mean([r["paired"] for r in results[nm]])
-      print(f"  {f'both rear within {pair_window * 1000:.0f} ms (%)':30s} {nm}: {100 * c:5.1f}%")
+      print(f"  {f'both {pair_word} within {pair_window * 1000:.0f} ms (%)':30s} {nm}: {100 * c:5.1f}%")
     for nm in names:
       c = np.mean([r["landed_up"] for r in results[nm]])
       print(f"  {'landed, up at the end (%)':30s} {nm}: {100 * c:5.1f}%")
@@ -450,11 +463,11 @@ def main():
       alive = [r["kneel"] for r in results[nm] if r["why"] == 0]
       k = np.mean(alive) if alive else 0.0
       print(f"  {'kneeling at the end (% alive)':30s} {nm}: {100 * k:5.1f}%")
-    both = lambda r: r["why"] == 0 and not np.isnan(r["rear_gap"])
-    stat("rear feet touchdown gap (ms)", "rear_gap", "5.0f", keep=both, scale=1000)
+    both = lambda r: r["why"] == 0 and not np.isnan(r["catch_gap"])
+    stat(f"{pair_word} feet touchdown gap (ms)", "catch_gap", "5.0f", keep=both, scale=1000)
     for nm in names:
-      late = [r["rear_late"] for r in results[nm] if both(r)]
-      print(f"  {'2nd rear foot after the front':30s} {nm}: {100 * np.mean(late) if late else 0.0:5.1f}%")
+      late = [r["catch_late"] for r in results[nm] if both(r)]
+      print(f"  {f'2nd {pair_word} foot after the {other_word}':30s} {nm}: {100 * np.mean(late) if late else 0.0:5.1f}%")
     stat("left/right mismatch (rad^2 s)", "mirror", "5.2f")
     stat("  of it in the air (rad^2 s)", "mirror_air", "5.2f")
   print("\ngentleness  (median / 95th, robots that didn't fall)")
@@ -467,11 +480,12 @@ def main():
   landed_ok = lambda r: r["why"] == 0 and r["landed"]
   # Flat tiles only: on stairs and slopes the start's ground isn't the ground under the knees.
   flat_ok = lambda r: landed_ok(r) and r["terrain"] == "flat"
-  stat("front knees up at touchdown, flat (cm)", "knee_up_front", "5.1f", keep=flat_ok, scale=100, tail=5)
-  stat("rear knees up at touchdown, flat (cm)", "knee_up_rear", "5.1f", keep=flat_ok, scale=100, tail=5)
-  # Every touchdown, fell later or not (multistage stage 1 crashes after it).
   flat_td = lambda r: r["landed"] and r["terrain"] == "flat"
-  stat("  every touchdown, flat (cm)", "knee_up_rear", "5.1f", keep=flat_td, scale=100, tail=5)
+  for which in ("front", "rear"):
+    stat(f"{which} knees up at touchdown, flat (cm)", f"knee_up_{which}", "5.1f", keep=flat_ok, scale=100, tail=5)
+    # The catch pair's at every touchdown, fell later or not (multistage stage 1 crashes after it).
+    if which == pair_word:
+      stat("  every touchdown, flat (cm)", f"knee_up_{which}", "5.1f", keep=flat_td, scale=100, tail=5)
   stat("front knee motors after it (%)", "knee_tau_front", "5.0f", keep=landed_ok, scale=100, over=(99.0,))
   stat("rear knee motors after it (%)", "knee_tau_rear", "5.0f", keep=landed_ok, scale=100, over=(99.0,))
   stat("peak joint speed / top speed", "qd_frac", "5.2f", over=(0.9,))
@@ -512,6 +526,7 @@ def main():
       where[r["terrain"]] += 1
     print(f"failures {nm} ({sum(modes.values())}): {dict(modes.most_common())}")
     print(f"  by terrain: {dict(where.most_common())}")
+    print(f"  head/chin crash (% of flips): {100 * np.mean([r['head_crash'] for r in results[nm]]):.1f}%")
 
   if cfg.json:
     pct = lambda rows, k: float(100 * np.mean([r[k] for r in rows])) if rows else float("nan")
@@ -520,21 +535,24 @@ def main():
     for nm in names:
       rows = results[nm]
       up = [r for r in rows if r["why"] == 0]
-      both = [r for r in up if not np.isnan(r["rear_gap"])]
+      both = [r for r in up if not np.isnan(r["catch_gap"])]
+      catch = "catch" if back else "rear"  # FrontFlip's keys name its catch pair
       out[nm] = {
         "success": pct(rows, "success"),
         "flat": pct([r for r in rows if r["terrain"] == "flat"], "success"),
         "landed_up": pct(rows, "landed_up"),
         "caught": pct(rows, "caught"),
         "paired": pct(rows, "paired"),
-        "rear_gap_ms": med([1000 * r["rear_gap"] for r in both]),
-        "rear_late": pct(both, "rear_late"),
+        f"{catch}_gap_ms": med([1000 * r["catch_gap"] for r in both]),
+        f"{catch}_late": pct(both, "catch_late"),
         "knee_touch": pct(rows, "knee_hit"),
         "landing_force": med([r["land"] for r in up if r["landed"]]),
         "rear_knee_up_cm": med([100 * r["knee_up_rear"] for r in up if r["landed"] and r["terrain"] == "flat"]),
         "front_knee_up_cm": med([100 * r["knee_up_front"] for r in up if r["landed"] and r["terrain"] == "flat"]),
         "rear_knee_td_cm": med([100 * r["knee_up_rear"] for r in rows if r["landed"] and r["terrain"] == "flat"]),
         "front_knee_motor": med([100 * r["knee_tau_front"] for r in up if r["landed"]]),
+        "catch_knee_td_cm": med([100 * r["knee_up_catch"] for r in rows if r["landed"] and r["terrain"] == "flat"]),
+        "head_crash": pct(rows, "head_crash"),
         "by_terrain": {t: pct([r for r in rows if r["terrain"] == t], "success") for t in sorted({r["terrain"] for r in rows})},
       }
     with open(cfg.json, "w") as f:

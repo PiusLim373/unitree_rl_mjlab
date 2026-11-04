@@ -1,9 +1,9 @@
-"""Rewards and the fall check for the flips (SideFlip, FrontFlip).
+"""Rewards and the fall check for the flips (SideFlip, FrontFlip, BackFlip).
 
 A flip is a full turn about one body axis: `axis` 0 (forward, x: the side flip) or 1
-(left, y: the front flip). `direction` is the turn's sign about that axis (right-hand
-rule): the side flip uses -1 (over its left side; the right flip is the left policy
-mirrored, MirroredPolicy), the front flip +1 (nose down).
+(left, y: the front flip and backflip). `direction` is the turn's sign about that axis
+(right-hand rule): the side flip uses -1 (over its left side; the right flip is the left
+policy mirrored, MirroredPolicy), the front flip +1 (nose down), the backflip -1 (nose up).
 
 The rotation is integrated from the body's rate about the axis (projected gravity wraps
 at 180 deg), from the trigger on. It only counts after a liftoff: no limb (feet, calves,
@@ -69,6 +69,10 @@ landing_pose pays the legs in the stand pose on the way down, and a foot's impac
 as much as a knee's. Added at stage 4 it didn't change the posture, so it pays from
 stage 1 (the posture is learned with the flip), and mid-flip starts practise from the
 stand pose. It scores the hips too: without them the rear legs splayed out sideways.
+
+BackFlip: the front flip's terms with the pairs trading roles (rear_catch on the front feet,
+front_pivot on the rear ones). A short backflip comes down on its chin, where the LiDAR
+sits, so flip_termination's head_pattern never waives a crash on the head or chin.
 """
 
 from __future__ import annotations
@@ -357,7 +361,9 @@ class flip_termination(_rotation):
   rotation: an attempt that came up short. Falls (tipped or twisted, not level in time)
   always count. With landing_term (FrontFlip v6), a crash after the landing counts too;
   with catch_term (v7), a crash after the rear feet caught the ground (rear_catch), or
-  with catch_any (multistage) after either rear foot touched down (rear_catch.touched)."""
+  with catch_any (multistage) after either rear foot touched down (rear_catch.touched).
+  With head_pattern (BackFlip), a crash with any of those geoms in head_sensor down (the
+  head and chin) counts too."""
 
   def __call__(
     self,
@@ -377,6 +383,8 @@ class flip_termination(_rotation):
     fixed_axis: bool = False,
     catch_term: str | None = None,
     catch_any: bool = False,
+    head_sensor: str | None = None,
+    head_pattern: str | None = None,
   ) -> torch.Tensor:
     self._update(env, direction, start, end, sensor_name, geom_pattern, min_up_vel, asset_cfg, axis, fixed_axis)
     tm = env.termination_manager
@@ -386,6 +394,8 @@ class flip_termination(_rotation):
     if catch_term is not None:
       catch = env.reward_manager.get_term_cfg(catch_term).func
       committed = committed & ~(catch.touched if catch_any else catch.caught)
+    if head_pattern is not None:
+      committed = committed & ~_in_contact(env, head_sensor, head_pattern).any(dim=1)
     crash = tm.get_term(contact_term) & ~tm.get_term(fall_term) & committed
     return (tm.terminated & ~crash).float()
 
@@ -404,7 +414,9 @@ class rear_catch(_rotation):
   pair_window, nothing (and never caught) after that. `touched` notes the robots with a
   rear foot down that would count, paired or not (the catch itself without pair_window).
   first_pay (multistage stage 1): this share of the weight pays at the first rear foot
-  down, the rest for the pair (a stepping stone soon after going over the back)."""
+  down, the rest for the pair (a stepping stone soon after going over the back).
+
+  BackFlip: the same catch on the front feet (touch_pattern)."""
 
   def __init__(self, cfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
@@ -473,7 +485,7 @@ class front_pivot(_rotation):
   feet (front_pattern, not rear_pattern, in feet_sensor) on the ground before the liftoff,
   as a fraction of max_turns (capped at 1). Unitree's flip turns ~110 deg on its front
   feet before it leaves the ground; v5 rocked back nose-up and launched level. Not in a
-  mid-flip start."""
+  mid-flip start. BackFlip: the turn on the rear feet (front_pattern / rear_pattern swapped)."""
 
   def __init__(self, cfg, env: ManagerBasedRlEnv):
     super().__init__(cfg, env)
