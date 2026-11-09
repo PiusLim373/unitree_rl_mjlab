@@ -10,6 +10,11 @@ FSM:
   #   R2 + left / right   SideFlipLeft / SideFlipRight (same; hold R2, then tap the D-pad)
   #   R2 + up  FrontFlip (same)
   #   L2 + up  Recovery after a fall
+  #   L2 + Y   JointLock -> UprightWalk (rises on the rear legs); not from Velocity
+  #            In UprightWalk: sticks and D-pad walk, L2 + A comes down to JointLock,
+  #            R2 + left / right puts that paw out and back (hold R2, then tap the D-pad)
+  #            R1 + left / right waves that arm and puts it back (hold R1, then tap)
+  # L2 switches profile, R2 triggers skills.
   # A skill that falls or times out hands over to Velocity (standing still) while the
   # body is within its fallback.max_tilt of level, else to Damping.
   _: # enabled fsms
@@ -51,6 +56,11 @@ FSM:
     FrontFlip:
       id: 10
       type: DonkeyKick
+    # Rear-leg walking, the handshake and the wave: config/policy/upright/<version> (v4:
+    # uprightwalk_v4-2_multistage_to15500 model_15500), mirror-averaged policy.onnx.
+    UprightWalk:
+      id: 11
+      type: UprightWalk   # State_UprightWalk: RLBase plus the up/down command and the soft paw
   Damping:
     transitions:
       JointLock: LT + A.on_pressed
@@ -68,6 +78,7 @@ FSM:
       SideFlipLeft: RT + left.on_pressed
       SideFlipRight: RT + right.on_pressed
       FrontFlip: RT + up.on_pressed
+      UprightWalk: LT + Y.on_pressed  # L2 + Square on a PS pad
     kp: [60, 80, 80, 60, 80, 80, 60, 80, 80, 60, 80, 80]
     kd: [5, 4, 4, 5, 4, 4, 5, 4, 4, 5, 4, 4]
     ts: [0, 1, 2]
@@ -78,7 +89,7 @@ FSM:
     ]
     # Entered from these while already standing: straight to the stand pose in 1 s
     # instead of crouching to the lying keyframe and back up.
-    straight_from: [Velocity, DonkeyKick, QuickBuck, SideFlipLeft, SideFlipRight, FrontFlip]
+    straight_from: [Velocity, DonkeyKick, QuickBuck, SideFlipLeft, SideFlipRight, FrontFlip, UprightWalk]
   Velocity:
     transitions:
       Damping: LT + B.on_pressed
@@ -106,13 +117,13 @@ FSM:
       JointLock: LT + A.on_pressed   # stand back up (while lowering; from damping L2 + A does the same)
     kp: [60, 80, 80, 60, 80, 80, 60, 80, 80, 60, 80, 80]
     kd: [5, 4, 4, 5, 4, 4, 5, 4, 4, 5, 4, 4]
-    ts: [0, 1.5]
+    ts: [0, 1.9]
     qs: [
       [],
-      # SDK motor order (FR, FL, RR, RL). Rear legs as JointLock's first keyframe and
-      # Recovery's lying_pose; front legs folded less, nose up, so the head LiDAR clears
-      # the floor (at the full fold it touched and stopped spinning).
-      [0.0, 1.2, -2.4, 0.0, 1.2, -2.4, 0.0, 1.36, -2.65, 0.0, 1.36, -2.65],
+      # SDK motor order (FR, FL, RR, RL). Unitree's own lie-down pose, recorded from
+      # /lowcmd: the rear hips splay out, so the nose stays up and the head LiDAR clears
+      # the floor (with the hips at 0 it touched and stopped spinning).
+      [-0.045, 1.235, -2.743, 0.045, 1.235, -2.743, -0.3, 1.27, -2.743, 0.3, 1.27, -2.743],
     ]
     # Then Damping by itself, like Recovery: once every joint has held the
     # lying pose for hold_time after the keyframes, or after timeout either way.
@@ -279,3 +290,47 @@ FSM:
       hold_time: 0.3      # s
       # The policy's default pose (Velocity's stance), SDK motor order (FR, FL, RR, RL).
       stand_pose: [0.1, 0.9, -1.8, -0.1, 0.9, -1.8, 0.1, 0.9, -1.8, -0.1, 0.9, -1.8]
+  UprightWalk:
+    transitions:
+      Damping: LT + B.on_pressed    # manual stop: on two legs this drops it
+    policy_dir: config/policy/upright
+    come_down: LT + A.on_pressed    # an arm out comes back first, then the policy comes down and JointLock (down_check)
+    paw_left: RT + left.on_pressed  # tap: paw out; tap again: paw back (no time limit)
+    paw_right: RT + right.on_pressed
+    wave_left: RB + left.on_pressed # tap: wave; tap again: arm back (one arm at a time)
+    wave_right: RB + right.on_pressed
+    # Same numbers as training (src/tasks/upright/upright_env_cfg.py: STAGES fell;
+    # mdp/commands.py hand_min_nose_deg, ramp_s, back_s, stiffen_s, wave_ramp_s;
+    # mdp/actions.py paw_pose, hand_kp, hand_kd, WAVE).
+    start_check:          # on entry, else refused (back to JointLock)
+      max_tilt: 0.26      # rad (15 deg)
+      max_gyro: 0.5       # rad/s
+      max_joint_vel: 1.0  # rad/s, every joint
+      max_pose_err: 0.3   # rad, every joint vs stand_pose (not while JointLock is still rising)
+      # JointLock's last keyframe, SDK motor order (FR, FL, RR, RL).
+      stand_pose: [0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 0.8, -1.5, 0.0, 0.8, -1.5]
+    fall_check:           # -> Damping
+      min_nose: -0.52     # rad (-30 deg; 0 = level, 1.57 = upright)
+      max_nose: 2.09      # rad (120 deg, leaning back)
+      max_roll: 0.79      # rad (45 deg)
+    down_check:           # after L2 + A: level and still -> JointLock
+      max_tilt: 0.35      # rad
+      max_joint_vel: 0.5  # rad/s, every joint
+      hold_time: 0.3      # s
+      timeout: 4.0        # s after the up command goes to 0 (an arm out is back by then); not down -> Damping
+    paw:
+      ramp_time: 0.5      # s, out: pose and soft gains together
+      back_time: 1.5      # s, back: the soft arm to the rest pose first
+      stiffen_time: 1.0   # s, then the leg's own gains
+      min_nose: 1.22      # rad (70 deg): an arm only while upright (the wave too)
+      pose: [-0.35, 0.5, -1.0]   # hip, thigh, calf (left leg; the right hip mirrors)
+      kp: [10.0, 6.0, 10.0]
+      kd: [0.4, 0.4, 0.6]
+    wave:                 # the leg's own gains, with gravity compensation
+      ramp_time: 0.8      # s, out and back
+      center: [0.1, -0.4, -1.3]  # hip, thigh, calf (left leg; the right hip mirrors)
+      hip_amp: 0.45       # rad, the hip's swing
+      freq: 1.2           # Hz
+    tip_exit:             # past these, an arm out (or on its way back) goes straight back to the policy
+      min_nose: 0.87      # rad (50 deg; tipped onto the front feet, say)
+      max_roll: 0.52      # rad (30 deg)

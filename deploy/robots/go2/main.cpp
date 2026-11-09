@@ -5,6 +5,7 @@
 #include "FSM/State_Velocity.h"
 #include "FSM/State_Recovery.h"
 #include "FSM/State_DonkeyKick.h"
+#include "FSM/State_UprightWalk.h"
 
 std::unique_ptr<LowCmd_t> FSMState::lowcmd = nullptr;
 std::shared_ptr<LowState_t> FSMState::lowstate = nullptr;
@@ -54,7 +55,10 @@ int main(int argc, char** argv)
               << "  [R2 + Left / Right]  SideFlip left / right: same (hold R2, then tap the D-pad)\n"
               << "  [R2 + Up]  FrontFlip: same\n"
               << "             A skill that times out upright hands over to Velocity; a fall goes to damping\n"
-              << "  [L2 + Up]  Recovery after a fall: lies down, then damping by itself\n";
+              << "  [L2 + Up]  Recovery after a fall: lies down, then damping by itself\n"
+              << "  [L2 + Y]   JointLock -> UprightWalk: rises on the rear legs, sticks walk\n"
+              << "             in it: [L2 + A] come down to JointLock, [R2 + Left / Right] paw out / back,\n"
+              << "             [R1 + Left / Right] wave / back (one arm at a time)\n";
 
     while (true)
     {

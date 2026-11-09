@@ -1,0 +1,83 @@
+# Unitree-Go2-UprightWalk multistage v4 (stage 2 run 2026-11-08_21-38-13_uprightwalk_v4-2_multistage_to15500,
+# model_15500): rises from four legs, walks upright on cmd_vel, comes back down; handshake (soft paw) and
+# high wave, each a toggle with no time limit. Sideways barely moves (a bonus in training).
+# exported/policy.onnx is mirror-averaged; policy_raw.onnx is the plain policy.
+# Policy input: 50 values per step x 5-step history = 250, each term's history oldest -> newest,
+# then upright_slow_history: the last second in 10 bins of 0.1 s (gravity, gyro, rear joint pos and vel) = 180.
+# upright_phase: (sin, cos) of the 0.4 s gait clock, 0 at zero cmd_vel. upright_up: 1 up, 0 down. upright_hand: (left, right).
+# Policy joint order: FL, FR, RL, RR (hip, thigh, calf). joint_ids_map maps it to the SDK order FR, FL, RR, RL.
+joint_ids_map: [3,4,5,0,1,2,9,10,11,6,7,8,]
+step_dt: 0.02
+stiffness: [20, 20, 40, 20, 20, 40, 20, 20, 40, 20, 20, 40]
+damping:   [ 1,  1,  2,  1,  1,  2,  1,  1,  2,  1,  1,  2]
+default_joint_pos: [0,1.7,-1.0, 0,1.7,-1.0, 0,2.32,-1.5, 0,2.32,-1.5]
+
+commands:
+  base_velocity:
+    deadzone: 0.05          # stick values up to 5% read 0 (rest rescaled to full range)
+    stick_scale: [0.5, 0.5, 1.0]   # full stick = this forward/back, sideways, turn
+    dpad_lin_vel_x: 0.3     # hold D-pad up/down: exactly +/-0.3 m/s forward, sticks ignored
+    dpad_lin_vel_y: 0.2     # hold D-pad left/right: exactly +/-0.2 m/s sideways (not while L1, L2, R1 or R2 is held)
+    ranges:                 # training's (upright_env_cfg.py LIN_VEL_X, LIN_VEL_Y, ANG_VEL_Z)
+      lin_vel_x: [-0.5, 0.5]
+      lin_vel_y: [-0.5, 0.5]
+      ang_vel_z: [-1.0, 1.0]
+      heading: null
+actions:
+  JointPositionAction:
+    clip: null
+    joint_names: [.*]
+    scale: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    offset: [0,1.7,-1.0, 0,1.7,-1.0, 0,2.32,-1.5, 0,2.32,-1.5]
+    joint_ids: null
+observations:
+  base_ang_vel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 5
+  projected_gravity:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 5
+  upright_commands:
+    params: {command_name: base_velocity}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 5
+  upright_phase:
+    params: {period: 0.4}
+    clip: null
+    scale: [1.0, 1.0]
+    history_length: 5
+  upright_up:
+    params: {}
+    clip: null
+    scale: [1.0]
+    history_length: 5
+  upright_hand:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0]
+    history_length: 5
+  joint_pos_rel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  joint_vel_rel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  last_action:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  upright_slow_history:
+    params: {bins: 10, bin_steps: 5}
+    clip: null
+    scale: null
+    history_length: 1

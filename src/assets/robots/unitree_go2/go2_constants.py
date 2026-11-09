@@ -149,6 +149,12 @@ FULL_COLLISION = CollisionCfg(
   conaffinity=0,
 )
 
+# UprightWalk: as FULL_COLLISION, and the front legs also collide with the rest of the robot
+# (MuJoCo skips parent-child pairs). Upright they hang beside the body and the rear legs,
+# where the real robot's would hit them.
+_ARM_REGEX = r"^F[LR]_(thigh|calf\d|foot)_collision$"
+UPRIGHT_COLLISION = replace(FULL_COLLISION, conaffinity={_ARM_REGEX: 1, ".*_collision": 0})
+
 # For getting up after a fall: the robot rolls on its body and legs, so every geom
 # gets friction (condim 3) and the robot collides with itself (conaffinity 1;
 # MuJoCo still skips parent-child pairs). Priority 1 makes the robot's own
@@ -209,6 +215,23 @@ LYING_STATE = EntityCfg.InitialStateCfg(
 )
 
 
+# Standing upright on the rear legs, nose up (UprightWalk): rear feet under the whole-robot
+# centre of mass, front legs down by its sides as arms (elbows a little bent: straight, the
+# paws reach the rear hips).
+UPRIGHT_STATE = EntityCfg.InitialStateCfg(
+  pos=(0.0, 0.0, 0.53),
+  rot=(0.7071068, 0.0, -0.7071068, 0.0),
+  joint_pos={
+    ".*hip_joint": 0.0,
+    "R[LR]_thigh_joint": 2.32,
+    "R[LR]_calf_joint": -1.5,
+    "F[LR]_thigh_joint": 1.7,
+    "F[LR]_calf_joint": -1.0,
+  },
+  joint_vel={".*": 0.0},
+)
+
+
 def get_go2_robot_cfg() -> EntityCfg:
   """Get a fresh Go2 robot configuration instance.
 
@@ -228,6 +251,17 @@ def get_go2_dc_robot_cfg() -> EntityCfg:
   return EntityCfg(
     init_state=INIT_STATE,
     collisions=(FULL_COLLISION,),
+    spec_fn=get_spec,
+    articulation=GO2_DC_ARTICULATION,
+  )
+
+
+def get_go2_upright_robot_cfg() -> EntityCfg:
+  """Go2 for UprightWalk: DC motor curves, the upright pose as default (action offset), the
+  arms colliding with the body and rear legs."""
+  return EntityCfg(
+    init_state=UPRIGHT_STATE,
+    collisions=(UPRIGHT_COLLISION,),
     spec_fn=get_spec,
     articulation=GO2_DC_ARTICULATION,
   )

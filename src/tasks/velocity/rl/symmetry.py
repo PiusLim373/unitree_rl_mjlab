@@ -147,6 +147,21 @@ def _term_rule(
     return [0, 1], [-1.0, -1.0]
   if term == "kick_phase":  # DonkeyKick timer: time, not a side
     return [0], [1.0]
+  if term == "upright_cmd":  # UprightWalk up/down: not a side
+    return [0], [1.0]
+  if term == "hand":  # UprightWalk (left, right) paw flag: the paws swap
+    return [1, 0], [1.0, 1.0]
+  if term == "paw_force":  # UprightWalk simulated hand's force, heading frame
+    return [0, 1, 2], _LINEAR
+  if term == "drift":  # UprightWalk (vx, vy, wz) twice: slow velocity, offset since the paw went out
+    return [0, 1, 2, 3, 4, 5], [1.0, -1.0, -1.0, 1.0, -1.0, -1.0]
+  if term == "slow_history":  # UprightWalk: per bin gravity, gyro, rear joint positions and speeds
+    rear = [j for j in env.scene["robot"].joint_names if j.startswith("R")]
+    perm, sign = _leg_rule(rear)
+    k = len(rear)
+    step = [0, 1, 2, 3, 4, 5] + [6 + p for p in perm] + [6 + k + p for p in perm]
+    bins = env.command_manager.get_term(params["command_name"]).cfg.slow_bins
+    return [b * len(step) + p for b in range(bins) for p in step], (_LINEAR + _ANGULAR + sign + sign) * bins
   if term in ("joint_pos", "joint_vel"):
     return _leg_rule(env.scene["robot"].joint_names)
   if term == "actions":
