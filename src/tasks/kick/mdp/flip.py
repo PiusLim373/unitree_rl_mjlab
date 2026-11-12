@@ -70,6 +70,11 @@ as much as a knee's. Added at stage 4 it didn't change the posture, so it pays f
 stage 1 (the posture is learned with the flip), and mid-flip starts practise from the
 stand pose. It scores the hips too: without them the rear legs splayed out sideways.
 
+FrontFlip multistage v4: v3's flip cut all motor power in the launch on the real robot. The
+battery current (power.py) costs above a budget, and the power cut ends the episode like
+a crash that is never waived (flip_termination's power_term), and dc_torque_saturation has
+no free launch (the backflip too, from its multistage v2).
+
 BackFlip: the front flip's terms with the pairs trading roles (rear_catch on the front feet,
 front_pivot on the rear ones). A short backflip comes down on its chin, where the LiDAR
 sits, so flip_termination's head_pattern never waives a crash on the head or chin.
@@ -363,7 +368,8 @@ class flip_termination(_rotation):
   with catch_term (v7), a crash after the rear feet caught the ground (rear_catch), or
   with catch_any (multistage) after either rear foot touched down (rear_catch.touched).
   With head_pattern (BackFlip), a crash with any of those geoms in head_sensor down (the
-  head and chin) counts too."""
+  head and chin) counts too. With power_term (FrontFlip multistage v4), a step that also
+  ended it (the motor power cut) always counts."""
 
   def __call__(
     self,
@@ -385,6 +391,7 @@ class flip_termination(_rotation):
     catch_any: bool = False,
     head_sensor: str | None = None,
     head_pattern: str | None = None,
+    power_term: str | None = None,
   ) -> torch.Tensor:
     self._update(env, direction, start, end, sensor_name, geom_pattern, min_up_vel, asset_cfg, axis, fixed_axis)
     tm = env.termination_manager
@@ -397,6 +404,8 @@ class flip_termination(_rotation):
     if head_pattern is not None:
       committed = committed & ~_in_contact(env, head_sensor, head_pattern).any(dim=1)
     crash = tm.get_term(contact_term) & ~tm.get_term(fall_term) & committed
+    if power_term is not None:
+      crash = crash & ~tm.get_term(power_term)
     return (tm.terminated & ~crash).float()
 
 

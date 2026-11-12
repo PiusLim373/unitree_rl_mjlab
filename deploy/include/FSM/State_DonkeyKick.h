@@ -29,8 +29,8 @@
 // QuickBuck (the fast power kick, no handstand) and SideFlipLeft / SideFlipRight run on
 // this same class: each config.yaml entry has type DonkeyKick and its own policy_dir
 // (policy_file) and checks. The flips leave roll free (no fall_check.max_roll) and
-// limit the tilt only from tilt_after on, as training's flip_fell. FrontFlip leaves
-// pitch free (no min/max_pitch) and checks the left axis instead (max_side_tilt,
+// limit the tilt only from tilt_after on, as training's flip_fell. FrontFlip and BackFlip
+// leave pitch free (no min/max_pitch) and check the left axis instead (max_side_tilt,
 // max_side_angle), which holds through vertical, where roll doesn't.
 class State_DonkeyKick : public State_RLBase
 {

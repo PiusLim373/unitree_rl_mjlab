@@ -1,0 +1,51 @@
+# Unitree-Go2-FrontFlip multistage v4 (cluster run 2026-11-10_15-49-47_frontflip_v4-4_multistage, model_14000):
+# one full turn forward, nose down: up onto the front feet, over its back in the air, caught on both rear feet,
+# then down on all four and standing still. Trained under the real robot's power limit (v3 cut the motor power).
+# exported/policy.onnx is mirror-averaged; policy_raw.onnx is the plain policy.
+# Policy input: 43 values per step x 5-step history = 215, each term's history oldest -> newest.
+# kick_phase = time since the trigger / 1.5 s (FRONT_FLIP_TIMING stand_start), held at 1.
+# Policy joint order: FL, FR, RL, RR (hip, thigh, calf). joint_ids_map maps it to the SDK order FR, FL, RR, RL.
+joint_ids_map: [3,4,5,0,1,2,9,10,11,6,7,8,]
+step_dt: 0.02
+stiffness: [20, 20, 40, 20, 20, 40, 20, 20, 40, 20, 20, 40]
+damping:   [ 1,  1,  2,  1,  1,  2,  1,  1,  2,  1,  1,  2]
+default_joint_pos: [-0.1,0.9,-1.8, 0.1,0.9,-1.8, -0.1,0.9,-1.8, 0.1,0.9,-1.8]
+
+actions:
+  JointPositionAction:
+    clip: null
+    joint_names: [.*]
+    scale: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+    offset: [-0.1,0.9,-1.8, 0.1,0.9,-1.8, -0.1,0.9,-1.8, 0.1,0.9,-1.8]
+    joint_ids: null
+observations:
+  base_ang_vel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 5
+  projected_gravity:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0]
+    history_length: 5
+  joint_pos_rel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  joint_vel_rel:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  last_action:
+    params: {}
+    clip: null
+    scale: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    history_length: 5
+  kick_phase:
+    params: {duration: 1.5}
+    clip: null
+    scale: [1.0]
+    history_length: 5

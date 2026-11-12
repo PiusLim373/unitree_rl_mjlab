@@ -22,11 +22,15 @@ off as the motor saturation penalty ramped in: v5 frees the launch from that pen
 starts some training episodes in the air partway through the flip (reset_mid_flip).
 v6 to v13 built the flip by fine-tuning one run after another; the multistage recipe
 (front_flip_stage, scripts/train_front_flip.py) trains it from scratch in stages instead.
+Multistage v4 adds the real robot's power limit: v3's flip cut all motor power in its launch.
+Multistage v5 (the robot colliding with itself, legs touching cost) launched one front leg
+first and was dropped; v4 is the front flip.
 
 BackFlip: one turn nose-up, over its back, by FrontFlip's multistage recipe (back_flip_stage)
 with the front and rear feet trading roles: the turn starts on the rear feet and the front
 feet catch the ground. A short flip comes down on the chin, where the LiDAR sits, so from
-stage 2 a crash there always costs (head_crash).
+stage 2 a crash there always costs (head_crash). Multistage v2: FrontFlip v4's power rules.
+v3 added self-collision and a legs touching cost; dropped, v2 is the backflip (user's test).
 
 Built from a finished DonkeyKick configuration (to_flip_env_cfg), like QuickBuck: the
 start poses, terrain mix, randomisation, observations, actions, body-contact
@@ -35,6 +39,8 @@ Swapped: the timing, the flip rewards (spin reads the robot's whole-body angular
 momentum sensor), the fall check (the flip's own turn is free while flipping) and 90%
 motor limits.
 """
+
+from dataclasses import fields
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.event_manager import EventTermCfg
@@ -194,6 +200,18 @@ FRONT_FLIP_LANDING_POSE = {"weight": 20.0, "min_turns": 0.75, "pose_var": 0.25, 
 # feet down hard; twice the cost, from a lower force, so the rear legs brake the spin.
 FRONT_FLIP_FEET_IMPACT = {"weight": -10.0, "force_threshold": 300.0}
 
+# Multistage v4: v3's launch drew ~200 A on the real robot and cut all motor power (the side
+# flip's ~50 A was fine). Its PD targets asked up to ~3.5x the motors' torque (the side flip
+# ~1x), which the sim caps but the real motors pull current for. From stage 1, in the penalty
+# ramp: the estimated bus current (mdp/power.py, the PD request capped at over_limit of the
+# limit) costs above the budget, a PD request above a motor's limit costs, and so does motor
+# saturation in the launch (no free launch). From stage 2 the power cut (A) ends the episode,
+# between the side flip (never) and v3 (every flip). Weights: v3's launch costs about two
+# crashes in current, one in requested torque.
+FRONT_FLIP_POWER = {"weight": -60.0, "budget": 50.0, "over_limit": 1.2}
+FRONT_FLIP_REQUESTED_TORQUE_WEIGHT = -3.5
+FRONT_FLIP_POWER_CUT = 100.0
+
 # v12 only: each second from the first rear touchdown until both rear feet are down. It
 # shortened the gap but kept the reach, and charged the uneven touchdowns rough ground and
 # stairs force (v13 drops it).
@@ -236,7 +254,7 @@ TERMINATION_WEIGHT = -250.0
 # (no turn_track without a profile); fixed_axis / upside_down / fall's max_axis_angle: see
 # mdp/flip.py; spin_weight: 1 if not given. FrontFlip only: heading_penalty (heading_hold
 # as a penalty), stand_after_landing, commit_turns (flip_termination), free_launch
-# (dc_torque_saturation from the liftoff), mid_flip (reset_mid_flip's settings); v6: catch
+# (dc_torque_saturation from the liftoff; unused since multistage v4), mid_flip (reset_mid_flip's settings); v6: catch
 # (rear_catch), pivot (front_pivot), front_landing (the landing counts front feet only, so
 # rear feet already down from a catch don't use it up), stand_from_landing (standing pays
 # from the landing, not stand_start), crash_after_landing (flip_termination charges it);
@@ -249,7 +267,9 @@ TERMINATION_WEIGHT = -250.0
 # multistage: catch's pair_window / pair_full / first_pay (with crash_after_catch, a crash
 # after either rear foot touched down costs); multistage v2: landing_pose (landing_pose's
 # weight and settings), feet_impact (the feet's landing penalty weight; v3: and threshold,
-# in place of LANDING_FORCE's). BackFlip: front_catch (the pairs trade roles: the front feet
+# in place of LANDING_FORCE's); multistage v4: power (bus_current's weight and budget, the
+# action's over_limit), requested_torque (its weight), power_cut (the power_cut
+# termination's limit, A). BackFlip: front_catch (the pairs trade roles: the front feet
 # catch, and the rear ones pivot and count for front_landing), head_crash (flip_termination
 # never waives a crash on the head or chin).
 SIDE_FLIP = {
@@ -281,7 +301,6 @@ FRONT_FLIP = {
   "heading_penalty": True,
   "stand_after_landing": True,
   "commit_turns": FRONT_FLIP_COMMIT_TURNS,
-  "free_launch": True,
   "mid_flip": FRONT_FLIP_MID_START,
   "catch": FRONT_FLIP_CATCH,
   "pivot": FRONT_FLIP_PIVOT,
@@ -297,7 +316,12 @@ FRONT_FLIP = {
   "mirror_pose": FRONT_FLIP_MIRROR_POSE,
   "landing_pose": FRONT_FLIP_LANDING_POSE,
   "feet_impact": FRONT_FLIP_FEET_IMPACT,
+  "power": FRONT_FLIP_POWER,
+  "requested_torque": FRONT_FLIP_REQUESTED_TORQUE_WEIGHT,
+  "power_cut": FRONT_FLIP_POWER_CUT,
 }
+# Multistage v2: with FrontFlip v4's power rules (v1, trained before them with a free launch,
+# drew more current in sim than the front flip that cut the motor power).
 BACK_FLIP = {
   **FRONT_FLIP,
   "direction": BACK_FLIP_DIRECTION,
@@ -309,10 +333,10 @@ BACK_FLIP = {
 # Multistage (scripts/train_front_flip.py): FRONT_FLIP from scratch in four stages, each
 # adding the rules the fine-tune runs added, in their order: 1 = v6's (finding the flip),
 # 2 = v7's (a clean landing) and mirror_pose, 3 = v9's (up off the knees), 4 = v10's (no
-# knee slam) with v3's feet impact, which is FRONT_FLIP (v2's landing pose from stage 1).
-# The keys each stage adds:
+# knee slam) with v3's feet impact, which is FRONT_FLIP (v2's landing pose from stage 1, v4's
+# power costs from stage 1 and its power cut from stage 2). The keys each stage adds:
 FRONT_FLIP_STAGE_KEYS = {
-  2: ("clean_landing", "crash_after_catch", "stand_from_catch", "mirror_pose"),
+  2: ("clean_landing", "crash_after_catch", "stand_from_catch", "mirror_pose", "power_cut"),
   3: ("knee_down", "wide_stand"),
   4: ("knee_impact", "feet_impact"),
 }
@@ -561,6 +585,20 @@ def to_flip_env_cfg(
   )
   if spec.get("free_launch"):
     rewards["dc_torque_saturation"].params.update(launch_term=progress_key, launch_end=timing["spin_end"])
+  # The real robot's power limit: the bus current above a budget, the PD asking a motor for
+  # more than it has.
+  power_terms = []
+  if spec.get("power"):
+    power = dict(spec["power"])
+    action = cfg.actions["joint_pos"]
+    cfg.actions["joint_pos"] = mdp.PowerJointPositionActionCfg(
+      **{f.name: getattr(action, f.name) for f in fields(action) if f.init}, over_limit=power.pop("over_limit")
+    )
+    rewards["bus_current"] = RewardTermCfg(func=mdp.flip_current_excess, weight=power.pop("weight"), params=power)
+    power_terms.append("bus_current")
+  if spec.get("requested_torque"):
+    rewards["requested_torque"] = RewardTermCfg(func=mdp.requested_torque_excess, weight=spec["requested_torque"])
+    power_terms.append("requested_torque")
   # A jump and a spin need a big, sudden action: QuickBuck's halved smoothness penalties.
   rewards["action_rate"].weight = -0.05
   rewards["joint_acc"].weight = -1.25e-7
@@ -569,7 +607,7 @@ def to_flip_env_cfg(
     ramp = cfg.curriculum["penalty_ramp"].params
     ramp["term_names"] = [
       "landing" if n == "rear_landing" else n for n in ramp["term_names"] if n != "front_slip"
-    ] + ["dc_torque_saturation"]
+    ] + ["dc_torque_saturation"] + power_terms
   apply_power_fraction(cfg, POWER_FRACTION, JOINT_VEL_EXCESS_WEIGHT)
 
   ##
@@ -577,6 +615,13 @@ def to_flip_env_cfg(
   ##
 
   cfg.terminations["fell"] = TerminationTermCfg(func=mdp.flip_fell, params={**spec["fall"], **axis})
+  # Where the real robot would lose motor power: ends it like a crash, always charged.
+  if spec.get("power_cut") is not None:
+    if not spec.get("power"):
+      raise ValueError("power_cut needs power (the action's current estimate).")
+    cfg.terminations["power_cut"] = TerminationTermCfg(func=mdp.power_cut, params={"limit": spec["power_cut"]})
+    if rewards["termination"].func is mdp.flip_termination:
+      rewards["termination"].params["power_term"] = "power_cut"
 
   del cfg.metrics["handstand"]
   # x episode length (2 s) = seconds with no limb on the ground.

@@ -23,8 +23,19 @@ v3: stage 4 only, from v2's stage 3: the feet's impact costs twice as much, from
 force (v2's front feet landed hard, the rear softly). v2's code is in
 logs/rsl_rl/go2_frontflip/frontflip_v2_multistage_code_backup.
 
+v4: from scratch with the real robot's power limit (v3's flip cut all motor power in its
+launch): the battery current, PD requests above a motor's limit and launch saturation cost
+from stage 1, the power cut ends the episode from stage 2, and every stage also checks the
+current (95th percentile, all flips) and the power cuts. Only 4096 robots found the flip
+(1024 never did). Its stage 1 came down with the rear knees ~5 cm up, so stage 1's knee
+check was loosened to 4.5 cm and stages 2-4 went on from its model_6000; stage 4's knee and
+landing force checks judge the knees.
+v5 (self-collision, legs touching cost and check) launched one front leg first; dropped.
+
 BackFlip (--flip back): the same stages (back_flip_stage), the front feet catching. Its
 checks read the catch pair's knees, and stage 4 also limits crashes on the head or chin.
+v2: FrontFlip v4's power rules and current checks (at 4096 robots). v3 (self-collision)
+was dropped: v2 is the backflip.
 
 Runs are named frontflip_v<version>-<stage>_multistage (backflip_...). The summary (runs,
 checkpoints, results, checks, status) is logs/rsl_rl/go2_frontflip/frontflip_v<version>_multistage.json
@@ -55,6 +66,7 @@ import tyro
 # The flip's code, copied into each stage's run folder.
 CODE = (
   "src/tasks/kick/mdp/flip.py",
+  "src/tasks/kick/mdp/power.py",
   "src/tasks/kick/flip_env_cfg.py",
   "src/tasks/kick/config/go2/env_cfgs.py",
   "src/tasks/kick/config/go2/__init__.py",
@@ -72,19 +84,23 @@ class Stage:
   limits: dict[str, float] = field(default_factory=dict)  # eval result -> the most that passes
 
 
+# v4: every FrontFlip stage also needs the current under the cut with room (the side flip,
+# safe on the robot, reads ~65 A at its 95th percentile) and almost no power cuts (%).
+POWER_LIMITS = {"current_p95": 70.0, "power_cut": 1.0}
 # The lengths follow the fine-tune runs each stage repeats (v6, v8, v9, v10; stage 4 longer
 # from v2: v1's was still improving at its end). Stage 1's knee height: v1's ~3 cm, the
-# stand pose's well over 10.
+# stand pose's well over 10 (8 until v4, whose power-limited flip came down at ~5).
 STAGES = {
   1: Stage(
-    "Unitree-Go2-FrontFlip-S1", 6000, {"paired": 70.0, "rear_knee_td_cm": 8.0},
-    "over its back, caught on both rear feet, legs under the hips",
+    "Unitree-Go2-FrontFlip-S1", 6000, {"paired": 70.0, "rear_knee_td_cm": 4.5},
+    "over its back, caught on both rear feet, legs under the hips", POWER_LIMITS,
   ),
-  2: Stage("Unitree-Go2-FrontFlip-S2", 1000, {"landed_up": 80.0}, "a clean landing, still up at the end"),
-  3: Stage("Unitree-Go2-FrontFlip-S3", 3000, {"success": 85.0}, "up off the knees, standing still"),
+  2: Stage("Unitree-Go2-FrontFlip-S2", 1000, {"landed_up": 80.0}, "a clean landing, still up at the end", POWER_LIMITS),
+  3: Stage("Unitree-Go2-FrontFlip-S3", 3000, {"success": 85.0}, "up off the knees, standing still", POWER_LIMITS),
   4: Stage(
     "Unitree-Go2-FrontFlip", 4000, {"success": 90.0, "flat": 99.0},
-    "legs under the hips, no knee slam (the full FrontFlip)", {"knee_touch": 25.0, "landing_force": 450.0},
+    "legs under the hips, no knee slam (the full FrontFlip)",
+    {"knee_touch": 25.0, "landing_force": 450.0, **POWER_LIMITS},
   ),
 }
 # BackFlip: FrontFlip's stages with the front feet catching; stage 4 also limits crashes on
@@ -92,14 +108,14 @@ STAGES = {
 BACK_STAGES = {
   1: Stage(
     "Unitree-Go2-BackFlip-S1", 6000, {"paired": 70.0, "catch_knee_td_cm": 8.0},
-    "over its back, caught on both front feet, legs under the hips",
+    "over its back, caught on both front feet, legs under the hips", POWER_LIMITS,
   ),
-  2: Stage("Unitree-Go2-BackFlip-S2", 1000, {"landed_up": 80.0}, "a clean landing, still up at the end"),
-  3: Stage("Unitree-Go2-BackFlip-S3", 3000, {"success": 85.0}, "up off the knees, standing still"),
+  2: Stage("Unitree-Go2-BackFlip-S2", 1000, {"landed_up": 80.0}, "a clean landing, still up at the end", POWER_LIMITS),
+  3: Stage("Unitree-Go2-BackFlip-S3", 3000, {"success": 85.0}, "up off the knees, standing still", POWER_LIMITS),
   4: Stage(
     "Unitree-Go2-BackFlip", 4000, {"success": 90.0, "flat": 99.0},
     "legs under the hips, no knee slam (the full BackFlip)",
-    {"knee_touch": 25.0, "landing_force": 450.0, "head_crash": 1.0},
+    {"knee_touch": 25.0, "landing_force": 450.0, "head_crash": 1.0, **POWER_LIMITS},
   ),
 }
 # Each flip's experiment folder and stages (the last stage's task is the eval task).

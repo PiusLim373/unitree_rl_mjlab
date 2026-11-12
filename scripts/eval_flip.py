@@ -32,6 +32,9 @@ front feet, which the body rate counted). Reports:
     |q - mirror(q)|^2 dt: v11; and in the air only: v13)
   - failure modes (with the body parts down at a crash: body, head, chin, hips), by terrain,
     and the share of flips that crash with the head or chin down
+  - FrontFlip multistage v4: the estimated battery current (each flip's highest control-step
+    mean, mdp/power.py; falls included up to the fall), the largest PD request over a
+    motor's limit, and the power cuts (the real robot losing motor power)
   - BackFlip: FrontFlip's report with the pairs trading roles (the turn on the rear feet
     before the liftoff, the front-feet catch, its pair gap and knees)
 
@@ -159,6 +162,10 @@ def main():
     return out
 
   tm.compute = check_and_note
+  # The battery current estimate and the power cut (FrontFlip multistage v4).
+  power = base.action_manager.get_term("joint_pos")
+  has_power = hasattr(power, "step_amps")
+  cut_limit = env_cfg.terminations["power_cut"].params["limit"] if "power_cut" in env_cfg.terminations else None
   full_turn_max = spec["landing"]["max_turns"]
   model = base.sim.mj_model
   act_ids = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, f"robot/{a}") for a in robot.actuator_names]
@@ -271,12 +278,13 @@ def main():
         jointlock0 = (calf0 > -1.65).cpu().numpy()
         xy0 = pos0[:, :2].cpu().numpy()
         alive = torch.ones(n, dtype=torch.bool, device=device)
-        why = torch.zeros(n, dtype=torch.long, device=device)  # 0 alive, 1 body contact, 2 fell
+        why = torch.zeros(n, dtype=torch.long, device=device)  # 0 alive, 1 body contact, 2 fell, 3 power cut
         hit = torch.zeros(n, dtype=torch.long, device=device)  # body parts down at a crash (bits)
         z = lambda: torch.zeros(n, device=device)
         b = lambda: torch.zeros(n, dtype=torch.bool, device=device)
         turns, height, air, pitch_max, land_peak, tilt_max, off_max = z(), z(), z(), z(), z(), z(), z()
         qd_frac, tau90_time, tau_time = z(), z(), z()
+        amps, ask = z(), z()
         lifted, landed, tau_hit, caught = b(), b(), b(), b()
         knee_hit, knee_peak = b(), z()
         knee_up = torch.full((n, 2), float("nan"), device=device)  # front, rear knees at the touchdown (m)
@@ -296,7 +304,12 @@ def main():
           why = torch.where(ended & tm.get_term("body_contact"), torch.ones_like(why), why)
           hit = torch.where(ended & tm.get_term("body_contact"), at_check["parts"], hit)
           why = torch.where(ended & tm.get_term("fell") & (why == 0), torch.full_like(why, 2), why)
+          if cut_limit is not None:  # the power went first
+            why = torch.where(ended & tm.get_term("power_cut"), torch.full_like(why, 3), why)
           t_end = torch.where(ended, torch.full_like(t_end, t), t_end)
+          if has_power:  # this step's, before a reset
+            amps = torch.where(alive, torch.maximum(amps, power.step_amps), amps)
+            ask = torch.where(alive, torch.maximum(ask, power.step_ask), ask)
           alive &= ~ended
           if not alive.any():
             break
@@ -381,7 +394,8 @@ def main():
         knee_up_front=knee_up[:, 0], knee_up_rear=knee_up[:, 1], knee_up_catch=knee_up[:, 0 if back else 1],
         knee_tau_front=knee_tau[:, 0],
         knee_tau_rear=knee_tau[:, 1],
-        off=off_max, t_end=t_end, lift_turns=lift_turns, caught=caught, catch_turns=catch_turns, hit=hit).items()}
+        off=off_max, t_end=t_end, lift_turns=lift_turns, caught=caught, catch_turns=catch_turns, hit=hit,
+        amps=amps, ask=ask).items()}
       for e in range(n):
         r = {k: float(v[e]) for k, v in cols.items()}
         r["terrain"] = tile_of(xy0[e])
@@ -491,6 +505,15 @@ def main():
   stat("peak joint speed / top speed", "qd_frac", "5.2f", over=(0.9,))
   stat("time over 90% torque (ms)", "tau90", "5.0f", scale=1000)
   stat("time at torque limit (ms), hit", "tau_time", "5.0f", keep=lambda r: r["tau"], scale=1000)
+  if has_power:
+    print("\npower  (median / 95th, all flips up to a fall)")
+    every = lambda r: True
+    stat("battery current (A)", "amps", "6.0f", keep=every, over=(cut_limit or 100.0,))
+    stat("  on flat (A)", "amps", "6.0f", keep=lambda r: r["terrain"] == "flat", over=(cut_limit or 100.0,))
+    stat("largest PD request (x limit)", "ask", "5.2f", keep=every, over=(1.0,))
+    for nm in names:
+      c = np.mean([r["why"] == 3 for r in results[nm]])
+      print(f"  {'power cut (% of flips)':30s} {nm}: {100 * c:5.1f}%")
   print("\ntorque-limit hits  (% of flips; first hit by joint)")
   for nm in names:
     hit = [r for r in results[nm] if r["tau"]]
@@ -506,6 +529,8 @@ def main():
       if r["why"] == 1:
         mode = "body contact" + (" after the catch" if r["caught"] else " (after liftoff)" if r["lifted"] else "")
         mode += ": " + "+".join(p for k, p in enumerate(parts) if int(r["hit"]) >> k & 1)
+      elif r["why"] == 3:
+        mode = f"power cut (over {cut_limit:g} A)"
       elif r["why"] == 2:
         # Before land_by only the flip axis ends it (tipped, or turned with max_axis_angle).
         mode = "fell (flip axis off)" if r["t_end"] < t_land - 1e-6 else "fell (not level by land_by)"
@@ -553,6 +578,13 @@ def main():
         "front_knee_motor": med([100 * r["knee_tau_front"] for r in up if r["landed"]]),
         "catch_knee_td_cm": med([100 * r["knee_up_catch"] for r in rows if r["landed"] and r["terrain"] == "flat"]),
         "head_crash": pct(rows, "head_crash"),
+        **({
+          "current_a": med([r["amps"] for r in rows]),
+          "current_p95": float(np.percentile([r["amps"] for r in rows], 95)),
+          "current_flat_p95": float(np.percentile([r["amps"] for r in rows if r["terrain"] == "flat"] or [np.nan], 95)),
+          "ask": med([r["ask"] for r in rows]),
+          "power_cut": float(100 * np.mean([r["why"] == 3 for r in rows])),
+        } if has_power else {}),
         "by_terrain": {t: pct([r for r in rows if r["terrain"] == t], "success") for t in sorted({r["terrain"] for r in rows})},
       }
     with open(cfg.json, "w") as f:

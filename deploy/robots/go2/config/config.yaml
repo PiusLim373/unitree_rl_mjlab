@@ -8,7 +8,7 @@ FSM:
   #   D-pad    in Velocity: drive forward/back/sideways (deploy.yaml dpad_*)
   #   R2 + Y   DonkeyKick, R2 + X QuickBuck (from JointLock or Velocity, standing still)
   #   R2 + left / right   SideFlipLeft / SideFlipRight (same; hold R2, then tap the D-pad)
-  #   R2 + up  FrontFlip (same)
+  #   R2 + up / down   FrontFlip / BackFlip (same)
   #   L2 + up  Recovery after a fall
   #   L2 + Y   JointLock -> UprightWalk (rises on the rear legs); not from Velocity
   #            In UprightWalk: sticks and D-pad walk, L2 + A comes down to JointLock,
@@ -51,8 +51,8 @@ FSM:
     SideFlipRight:
       id: 9
       type: DonkeyKick
-    # The front flip: config/policy/frontflip/<version> (v3: frontflip_v3-4_multistage
-    # model_13500), mirror-averaged policy.onnx.
+    # The front flip: config/policy/frontflip/<version> (v4: frontflip_v4-4_multistage
+    # model_14000, under the real robot's power limit), mirror-averaged policy.onnx.
     FrontFlip:
       id: 10
       type: DonkeyKick
@@ -61,6 +61,11 @@ FSM:
     UprightWalk:
       id: 11
       type: UprightWalk   # State_UprightWalk: RLBase plus the up/down command and the soft paw
+    # The backflip: config/policy/backflip/v2 (backflip_v2-4_multistage model_14000,
+    # under the real robot's power limit), mirror-averaged policy.onnx.
+    BackFlip:
+      id: 12
+      type: DonkeyKick
   Damping:
     transitions:
       JointLock: LT + A.on_pressed
@@ -78,6 +83,7 @@ FSM:
       SideFlipLeft: RT + left.on_pressed
       SideFlipRight: RT + right.on_pressed
       FrontFlip: RT + up.on_pressed
+      BackFlip: RT + down.on_pressed
       UprightWalk: LT + Y.on_pressed  # L2 + Square on a PS pad
     kp: [60, 80, 80, 60, 80, 80, 60, 80, 80, 60, 80, 80]
     kd: [5, 4, 4, 5, 4, 4, 5, 4, 4, 5, 4, 4]
@@ -89,7 +95,7 @@ FSM:
     ]
     # Entered from these while already standing: straight to the stand pose in 1 s
     # instead of crouching to the lying keyframe and back up.
-    straight_from: [Velocity, DonkeyKick, QuickBuck, SideFlipLeft, SideFlipRight, FrontFlip, UprightWalk]
+    straight_from: [Velocity, DonkeyKick, QuickBuck, SideFlipLeft, SideFlipRight, FrontFlip, BackFlip, UprightWalk]
   Velocity:
     transitions:
       Damping: LT + B.on_pressed
@@ -100,6 +106,7 @@ FSM:
       SideFlipLeft: RT + left.on_pressed    # only while standing still
       SideFlipRight: RT + right.on_pressed
       FrontFlip: RT + up.on_pressed         # only while standing still
+      BackFlip: RT + down.on_pressed
     policy_dir: config/policy/velocity/v8sym
     # The way back to JointLock only counts when all of these hold, else the press is
     # ignored with a warning and it keeps walking.
@@ -110,7 +117,7 @@ FSM:
       max_tilt: 1.22        # rad (70 deg; training's fell_over limit)
     # Entered from these (done, or as their fallback): the command reads 0 until the
     # sticks are centred and the D-pad released once.
-    zero_commands_from: [DonkeyKick, QuickBuck, SideFlipLeft, SideFlipRight, FrontFlip]
+    zero_commands_from: [DonkeyKick, QuickBuck, SideFlipLeft, SideFlipRight, FrontFlip, BackFlip]
   LieDown:
     transitions:
       Damping: LT + B.on_pressed
@@ -269,6 +276,34 @@ FSM:
     timeout: 2.5   # s; not standing still by then -> fallback (training episodes are 2.5 s)
     # Same numbers as training (src/tasks/kick/flip_env_cfg.py: FRONT_FLIP_TIMING,
     # FRONT_FLIP_FALL; kick_env_cfg.py: STAND_CHECK).
+    start_check:          # on entry, else refused (back where it came from)
+      max_tilt: 0.26      # rad (15 deg)
+      max_gyro: 0.5       # rad/s
+      max_joint_vel: 1.0  # rad/s, every joint
+    fall_check:           # -> fallback; pitch is free while flipping
+      max_side_tilt: 0.7  # rad (40 deg), the left axis from level, any time
+      max_side_angle: 0.7 # rad, the left axis from its direction at entry, tipped or turned
+      max_tilt: 0.7       # rad (40 deg), body vs level...
+      tilt_after: 1.4     # ...from this many s after entry (FRONT_FLIP_TIMING land_by)
+    fallback:             # fall_check or timeout -> Velocity while it can still catch the robot, else Damping
+      state: Velocity
+      max_tilt: 0.6       # rad (34 deg), body vs level
+      max_gyro: 2.0       # rad/s, body turn rate (a robot already falling goes to Damping)
+    done_check:           # -> back where it came from
+      min_time: 1.5       # s after entry (FRONT_FLIP_TIMING stand_start)
+      max_tilt: 0.35      # rad
+      max_pose_err: 0.3   # rad, every joint vs stand_pose
+      max_joint_vel: 0.5  # rad/s, every joint
+      hold_time: 0.3      # s
+      # The policy's default pose (Velocity's stance), SDK motor order (FR, FL, RR, RL).
+      stand_pose: [0.1, 0.9, -1.8, -0.1, 0.9, -1.8, 0.1, 0.9, -1.8, -0.1, 0.9, -1.8]
+  BackFlip:
+    transitions:
+      Damping: LT + B.on_pressed    # manual escape to damping
+      Recovery: LT + up.on_pressed  # after a fall
+    policy_dir: config/policy/backflip/v2   # v2 (trained without self-collision); v3 dropped
+    timeout: 2.5   # s; not standing still by then -> fallback (training episodes are 2.5 s)
+    # FrontFlip's numbers: BACK_FLIP trains with FRONT_FLIP_TIMING and FRONT_FLIP_FALL.
     start_check:          # on entry, else refused (back where it came from)
       max_tilt: 0.26      # rad (15 deg)
       max_gyro: 0.5       # rad/s

@@ -53,7 +53,7 @@ int main(int argc, char** argv)
               << "  [D-pad]    in Velocity: drive forward/back/sideways at a fixed speed\n"
               << "  [R2 + Y]   DonkeyKick, [R2 + X] QuickBuck: standing still, hands back by itself\n"
               << "  [R2 + Left / Right]  SideFlip left / right: same (hold R2, then tap the D-pad)\n"
-              << "  [R2 + Up]  FrontFlip: same\n"
+              << "  [R2 + Up / Down]  FrontFlip / BackFlip: same\n"
               << "             A skill that times out upright hands over to Velocity; a fall goes to damping\n"
               << "  [L2 + Up]  Recovery after a fall: lies down, then damping by itself\n"
               << "  [L2 + Y]   JointLock -> UprightWalk: rises on the rear legs, sticks walk\n"
