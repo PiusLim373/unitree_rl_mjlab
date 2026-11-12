@@ -38,6 +38,25 @@ def foot_clearance(
   return torch.where(clearance < 0, torch.full_like(clearance, miss_value), clearance)
 
 
+def foot_clearance_patch(
+  env: ManagerBasedRlEnv, sensor_names: tuple[str, ...], miss_value: float = 1.0
+) -> torch.Tensor:
+  """Foot height above the highest ground in a patch of rays around each foot.
+
+  Same measure as ``feet_clearance_terrain`` with patch sensors, so the critic
+  sees what that reward scores. Feet whose rays all miss read ``miss_value``.
+  """
+  values = []
+  for name in sensor_names:
+    sensor: RayCastSensor = env.scene[name]
+    hit = sensor.data.distances >= 0
+    ground_z = torch.where(hit, sensor.data.hit_pos_w[..., 2], -torch.inf).amax(dim=1)
+    values.append(
+      torch.where(hit.any(dim=1), sensor.data.pos_w[:, 2] - ground_z, miss_value)
+    )
+  return torch.stack(values, dim=1)  # (num_envs, num_feet)
+
+
 def foot_air_time(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
   sensor: ContactSensor = env.scene[sensor_name]
   sensor_data = sensor.data

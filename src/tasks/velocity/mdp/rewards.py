@@ -233,10 +233,13 @@ class feet_clearance_terrain:
   """Penalize feet that move while lower than a target height above the ground.
 
   One-sided: lifting higher than ``target_height`` costs nothing. Height is the
-  foot's current z minus the ground z found by one downward ray per foot, so it
+  foot's current z minus the highest ground z found by its ray sensor, so it
   means the same on stairs as on flat ground, unlike ``feet_clearance`` which
-  uses world z. Weighted by horizontal foot speed, so it acts on feet moving
-  forward rather than planted ones or the near-vertical lift-off/touchdown.
+  uses world z. With one downward ray per foot that is the ground under the
+  foot; with a patch of rays around the foot, a stair edge next to the foot
+  counts too, so the needed lift follows the terrain. Weighted by horizontal
+  foot speed, so it acts on feet moving forward rather than planted ones or the
+  near-vertical lift-off/touchdown.
 
   With ``speed_saturation`` set, the weight is ``min(foot_speed / speed_saturation,
   1)``: any foot moving faster than that counts fully. Without it (raw foot
@@ -293,11 +296,14 @@ class feet_clearance_terrain:
     hit, ground_z = [], []
     for name in sensor_names:
       ray_data = env.scene[name].data
-      hit.append(ray_data.distances[:, 0] >= 0)
-      ground_z.append(ray_data.hit_pos_w[:, 0, 2])
+      ray_hit = ray_data.distances >= 0
+      hit.append(ray_hit.any(dim=1))
+      ground_z.append(
+        torch.where(ray_hit, ray_data.hit_pos_w[..., 2], -torch.inf).amax(dim=1)
+      )
     foot_z = asset.data.site_pos_w[:, self.site_ids, 2]
     clearance = foot_z - torch.stack(ground_z, dim=1)
-    # A ray that misses the ground counts as high enough.
+    # A foot whose rays all miss the ground counts as high enough.
     clearance = torch.where(
       torch.stack(hit, dim=1), clearance, torch.full_like(clearance, target_height)
     )

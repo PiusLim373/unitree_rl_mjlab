@@ -27,6 +27,8 @@ from mjlab.sensor import (
 )
 from mjlab.tasks.velocity import mdp
 from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
+from mjlab.utils.noise import NoiseModelWithAdditiveBiasCfg
+from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 from src.tasks.velocity.mdp import (
   LiftedGridPatternCfg,
@@ -34,6 +36,7 @@ from src.tasks.velocity.mdp import (
   contact_fraction,
   feet_clearance_terrain,
   foot_clearance,
+  foot_clearance_patch,
   self_collision_cost,
   terrain_levels_tracking,
   track_forward_velocity,
@@ -364,6 +367,73 @@ def unitree_go2_rough_blind_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     # origin) has at most nconmax contacts. In the random 5x5 play layout the origin
     # can be inside a stair pyramid (up to 62 contacts vs 35), so let it size itself.
     cfg.sim.nconmax = None
+
+  return cfg
+
+
+def unitree_go2_rough_perceptive_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Create Unitree Go2 rough terrain velocity configuration with a perceptive actor.
+
+  Rough-Blind's recipe (v8) with the height scan back in the actor, corrupted to
+  look like the real LiDAR height map. Feet lift by what is near them instead of
+  a blind margin: at least 8 cm above the highest ground in a small patch around
+  each foot, so flat ground needs a low swing and a stair edge a high one.
+  Stairs go up to 20 cm.
+  """
+  cfg = unitree_go2_rough_blind_env_cfg(play=play)
+
+  # Per-term history: the proprioceptive terms keep v8's 5 steps, the scan has one.
+  actor = cfg.observations["actor"]
+  actor.history_length = None
+  actor.terms = {name: replace(term, history_length=5) for name, term in actor.terms.items()}
+  # The scan as the real map node gives it: clipped to its [-0.5, 1.3] m range,
+  # +-2 cm per value plus one +-5 cm offset per episode (base height error), and
+  # 0-2 steps (0-40 ms) late, the lag held ~10 steps at a time. The bias noise is
+  # "abs" because each reset applies it to the old bias ("add" would random-walk).
+  actor.terms["height_scan"] = replace(
+    cfg.observations["critic"].terms["height_scan"],
+    noise=NoiseModelWithAdditiveBiasCfg(
+      noise_cfg=Unoise(n_min=-0.02, n_max=0.02),
+      bias_noise_cfg=Unoise(n_min=-0.05, n_max=0.05, operation="abs"),
+      sample_bias_per_component=False,
+    ),
+    clip=(-0.5, 1.3),
+    delay_max_lag=2,
+    delay_hold_prob=0.9,
+  )
+
+  # A 5 x 5 patch of rays (+-8 cm) around each foot in place of v8's single ray,
+  # under the same names. Rays start 0.5 m up, so beside a step they land on its
+  # top rather than inside it. Yaw-aligned, so the patch mirrors with the robot.
+  patches = {
+    f"foot_ray_{site}": RayCastSensorCfg(
+      name=f"foot_ray_{site}",
+      frame=ObjRef(type="site", name=site, entity="robot"),
+      pattern=LiftedGridPatternCfg(size=(0.16, 0.16), resolution=0.04, z_offset=0.5),
+      ray_alignment="yaw",
+      max_distance=1.5,
+      exclude_parent_body=True,
+      include_geom_groups=(0, 1),
+    )
+    for site in ("FR", "FL", "RR", "RL")
+  }
+  cfg.scene.sensors = tuple(patches.get(s.name, s) for s in cfg.scene.sensors or ())
+  # Lift by the terrain, not a blind margin: 8 cm above the highest ground in the
+  # patch (v8: 15 cm above the ground under the foot). The critic sees the same.
+  foot_clearance_cfg = cfg.rewards["foot_clearance"]
+  foot_clearance_cfg.params["target_height"] = 0.08
+  cfg.observations["critic"].terms["foot_height"] = ObservationTermCfg(
+    func=foot_clearance_patch,
+    params={"sensor_names": foot_clearance_cfg.params["sensor_names"]},
+  )
+
+  # Stairs up to 20 cm risers (Rough-Blind: 15 cm), the height of real stairs.
+  if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
+    terrain_gen = cfg.scene.terrain.terrain_generator
+    for name in ("pyramid_stairs", "pyramid_stairs_inv"):
+      terrain_gen.sub_terrains[name] = replace(
+        terrain_gen.sub_terrains[name], step_height_range=(0.0, 0.20)
+      )
 
   return cfg
 
